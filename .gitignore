@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Cached audio
+speech_*.mp3
+output.mp3
+output.wav
+speech.mp3
+
+# OS
+.DS_Store
+
+# Claude internal
+.claude/
+
+# Model weights (large binary files)
+model/

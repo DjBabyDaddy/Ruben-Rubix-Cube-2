@@ -1,0 +1,29 @@
+vosk
+sounddevice
+pyaudio
+requests
+colorama
+openai
+python-dotenv
+soundfile
+pyautogui
+serpapi
+google-search-results
+pygame
+AppOpener
+pyperclip
+python-socketio 
+websocket-client
+whisper
+SpeechRecognition
+duckduckgo-search
+psutil
+edge_tts
+Pillow pygetwindow
+Keyboard
+obsws-python
+opencv-python
+face-recognition
+pillow playwright
+firefox
+openwakeword
