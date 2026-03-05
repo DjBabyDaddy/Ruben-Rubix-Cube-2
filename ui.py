@@ -234,10 +234,12 @@ class RubeUI:
         for char in current_display:
             current_chunk += char
             if len(current_chunk) > 65 and char in [" ", ".", "?", "!", ",", "\n"]:
-                chunks.append(current_chunk)
+                chunks.append(current_chunk.strip())
                 current_chunk = ""
-        
-        final_display = current_chunk.strip()
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        final_display = chunks[-1] if chunks else ""
         self.canvas.itemconfig(self.subtitle_id, text=final_display)
 
     def schedule_subtitle_clear(self):
