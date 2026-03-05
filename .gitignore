@@ -26,3 +26,6 @@ speech.mp3
 
 # Model weights (large binary files)
 model/
+
+# WhatsApp session data
+memory/whatsapp_session/
