@@ -12,7 +12,7 @@ def generate_image(prompt: str) -> str:
         
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
-            save_path = os.path.join(os.path.expanduser("~"), "Downloads", "RUBE_Generated_Graphic.jpg")
+            save_path = os.path.join(os.path.expanduser("~"), "Downloads", f"RUBE_Generated_Graphic_{int(time.time())}.jpg")
             with open(save_path, 'wb') as f:
                 f.write(response.content)
             return save_path
