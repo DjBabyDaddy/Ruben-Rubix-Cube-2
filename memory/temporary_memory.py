@@ -19,6 +19,8 @@ class TemporaryMemory:
         self.last_ai_response = text
         self.history.append(f"RUBE: {text}")
 
+    def get_last_ai_response(self): return self.last_ai_response
+
     def get_history_for_prompt(self): return "\n".join(self.history[-10:])
     def set_current_question(self, question): self.current_question = question
     def get_current_question(self): return self.current_question
