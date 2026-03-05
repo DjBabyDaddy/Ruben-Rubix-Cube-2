@@ -172,10 +172,15 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         temp_memory.set_last_user_text(user_text)
         geo_ctx = temp_memory.parameters.get("location", {})
         
+        last_user = temp_memory.get_last_user_text() or ""
+        last_ai = temp_memory.get_last_ai_response() or ""
+        recent_convo = f"User: {last_user}\nRUBE: {last_ai}" if last_user else ""
+
         memory_for_prompt = {
-            "user_name": user_name, 
+            "user_name": user_name,
             "current_location": f"{geo_ctx.get('city', 'New Orleans')}, {geo_ctx.get('region', 'Louisiana')}",
-            "current_time_context": datetime.datetime.now().strftime("%A, %B %d, %Y - %I:%M %p")
+            "current_time_context": datetime.datetime.now().strftime("%A, %B %d, %Y - %I:%M %p"),
+            "recent_conversation": recent_convo
         }
 
         try:
@@ -228,6 +233,7 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         elif intent == "generate_social_post": threading.Thread(target=generate_social_post, kwargs=args, daemon=True).start()
         elif intent == "generate_analytics_report": threading.Thread(target=generate_analytics_report, kwargs=args, daemon=True).start()
         elif intent == "email_message": threading.Thread(target=send_email_message, kwargs=args, daemon=True).start()
+        elif intent == "send_message": threading.Thread(target=send_message, kwargs=args, daemon=True).start()
         
         if response and intent != "register_api_key":
              edge_speak(response, ui)
