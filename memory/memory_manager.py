@@ -79,3 +79,18 @@ def update_memory(memory_update: dict) -> dict:
     memory = load_memory()
     if _recursive_update(memory, memory_update): save_memory(memory)
     return memory
+
+SUGGESTIONS_PATH = "memory/suggestions.json"
+
+def get_startup_suggestions() -> list:
+    """Load optimization suggestions written by the n8n analysis workflow."""
+    try:
+        if not os.path.exists(SUGGESTIONS_PATH):
+            return []
+        with open(SUGGESTIONS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [str(s) for s in data if s]
+        return []
+    except Exception:
+        return []

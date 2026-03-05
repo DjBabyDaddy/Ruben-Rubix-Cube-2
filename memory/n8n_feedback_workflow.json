@@ -1,0 +1,118 @@
+{
+  "name": "RUBE Self-Learning Feedback Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $json.feedbackLogPath || 'memory/feedback_log.json' }}",
+        "options": {}
+      },
+      "id": "node-read-log",
+      "name": "Read Feedback Log",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "notes": "CONFIGURE: Set fileSelector to the absolute path of memory/feedback_log.json on your machine"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the last 100 log entries and compute stats\nconst raw = $input.first().binary?.data\n  ? Buffer.from($input.first().binary.data, 'base64').toString('utf-8')\n  : $input.first().json?.data || '[]';\n\nlet entries = [];\ntry { entries = JSON.parse(raw); } catch { entries = []; }\nif (!Array.isArray(entries)) entries = [];\n\nconst last100 = entries.slice(-100);\n\n// Intent frequency\nconst intentCounts = {};\nconst intentTimes = {};\nlet failures = 0;\n\nfor (const e of last100) {\n  const intent = e.intent || 'unknown';\n  intentCounts[intent] = (intentCounts[intent] || 0) + 1;\n  if (!intentTimes[intent]) intentTimes[intent] = [];\n  intentTimes[intent].push(e.exec_time_ms || 0);\n  if (e.success === false) failures++;\n}\n\nconst avgTimes = {};\nfor (const [intent, times] of Object.entries(intentTimes)) {\n  avgTimes[intent] = Math.round(times.reduce((a, b) => a + b, 0) / times.length);\n}\n\nconst failurePct = last100.length > 0\n  ? ((failures / last100.length) * 100).toFixed(1)\n  : '0.0';\n\nconst recent10 = JSON.stringify(last100.slice(-10), null, 2);\n\nconst prompt = `You are analyzing performance logs for RUBE, an AI voice assistant.\n\nIntent frequency (last ${last100.length} runs): ${JSON.stringify(intentCounts)}\nAverage response time per intent (ms): ${JSON.stringify(avgTimes)}\nOverall failure rate: ${failurePct}%\n10 most recent entries: ${recent10}\n\nReturn a JSON array of 3-5 concise, actionable suggestions the developer can use\nto improve RUBE's reliability or speed. Plain strings only.\nReturn ONLY the JSON array. No other text.`;\n\nreturn [{ json: { prompt, entryCount: last100.length } }];"
+      },
+      "id": "node-prepare-prompt",
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    { \"role\": \"user\", \"content\": {{ JSON.stringify($json.prompt) }} }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-claude-api",
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "notes": "CONFIGURE: Add your Anthropic API key as an HTTP Header Auth credential with name 'x-api-key'"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and parse suggestions from Claude's response\nconst body = $input.first().json;\nlet text = '';\ntry {\n  text = body.content[0].text.trim();\n} catch {\n  return [{ json: { suggestions: [] } }];\n}\n\n// Strip any accidental markdown fences\ntext = text.replace(/^```json\\s*/i, '').replace(/```$/i, '').trim();\n\nlet suggestions = [];\ntry {\n  suggestions = JSON.parse(text);\n  if (!Array.isArray(suggestions)) suggestions = [];\n} catch {\n  suggestions = [];\n}\n\nreturn [{ json: { suggestions } }];"
+      },
+      "id": "node-parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.suggestionsPath || 'memory/suggestions.json' }}",
+        "dataPropertyName": "suggestionsData",
+        "options": {}
+      },
+      "id": "node-write-suggestions",
+      "name": "Write Suggestions",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "notes": "CONFIGURE: Set fileName to the absolute path of memory/suggestions.json on your machine"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Read Feedback Log", "type": "main", "index": 0 }]]
+    },
+    "Read Feedback Log": {
+      "main": [[{ "node": "Prepare Prompt", "type": "main", "index": 0 }]]
+    },
+    "Prepare Prompt": {
+      "main": [[{ "node": "Call Claude API", "type": "main", "index": 0 }]]
+    },
+    "Call Claude API": {
+      "main": [[{ "node": "Parse Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Response": {
+      "main": [[{ "node": "Write Suggestions", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "rube-feedback-loop-v1"
+  }
+}

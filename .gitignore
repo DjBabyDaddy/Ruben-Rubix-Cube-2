@@ -29,3 +29,7 @@ model/
 
 # WhatsApp session data
 memory/whatsapp_session/
+
+# Feedback telemetry (runtime-generated)
+memory/feedback_log.json
+memory/suggestions.json
