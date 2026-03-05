@@ -32,7 +32,9 @@ RULE 7: If the user asks for a "report", "analytics", "traffic", or "stats" for 
 - You must extract the client or platform name and place it in the "client_name" parameter.
 
 [THE VISION MATRIX PROTOCOL]
-RULE 8: If the user asks you to "look at", "read", "check out", or "watch" something, use the "vision_analysis" intent.
+RULE 8: If the user wants you to physically capture and analyze a visual input (camera, screen, video, or file), use the "vision_analysis" intent.
+- CRITICAL: "look" used conversationally is NOT a vision trigger. Phrases like "it looks like", "look at what you found", "you only looked at one", or any reference to data already retrieved must be routed as "chat" or "search", NOT "vision_analysis".
+- ONLY trigger "vision_analysis" when the user is directing you to capture something new with a sensor or file.
 - TARGET MAPPING:
   * If they say "look at the room" or "what do you see", target: "camera".
   * If they say "look at my screen", "read this", or "what is on my desktop", target: "screen".

@@ -28,7 +28,7 @@ def conversational_readout(raw_data, query, player):
     """Routes raw internet data through Groq, protected by a Token Shield, and pushes to UI Logs."""
     try:
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        system_instructions = "You are RUBE, a highly advanced AI. Your job is to translate raw JSON or web data into a natural, conversational spoken response for text-to-speech. Be concise (1 to 3 sentences). Translate technical weather formats, sports scores, or stock data into natural English. Do not use markdown, asterisks, or bullet points."
+        system_instructions = "You are RUBE, a highly advanced AI. Your job is to translate raw JSON or web data into a natural, conversational spoken response for text-to-speech. For single-item lookups, be concise (1-3 sentences). For schedules, game slates, or multi-item lists, enumerate ALL items clearly — do not cut the list short. Do not use markdown, asterisks, or bullet points. Use natural transitions like 'also' and 'then' to connect multiple items."
         
         safe_data = str(raw_data)
         if len(safe_data) > 3500:
@@ -43,7 +43,7 @@ def conversational_readout(raw_data, query, player):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.3,
-            max_tokens=150
+            max_tokens=400
         )
         final_text = completion.choices[0].message.content.strip()
         
@@ -149,10 +149,10 @@ def web_search(parameters: dict, response: str = "", player=None, session_memory
             data = json.loads(resp.read().decode('utf-8'))
             
             extracted_data = None
-            if "answer_box" in data:
-                extracted_data = data["answer_box"]
-            elif "sports_results" in data:
+            if "sports_results" in data:
                 extracted_data = data["sports_results"]
+            elif "answer_box" in data:
+                extracted_data = data["answer_box"]
             elif "finance_results" in data:
                 extracted_data = data["finance_results"]
             elif "organic_results" in data and data["organic_results"]:
