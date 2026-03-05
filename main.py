@@ -41,7 +41,8 @@ from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
 from actions.whatsapp import send_whatsapp_message, initialize_whatsapp_matrix
 from actions.social_manager import generate_social_post
 
-from memory.memory_manager import load_memory, update_memory
+from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
+from memory.feedback_logger import log_execution
 from memory.temporary_memory import TemporaryMemory
 
 interrupt_commands = ["stop", "cancel", "silence", "shut up", "shut down", "quiet", "abort"]
@@ -101,7 +102,12 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     else: greeting = f"Good evening, {user_name}. RUBE systems fully online."
     
     edge_speak(greeting, ui)
-    
+
+    suggestions = get_startup_suggestions()
+    if suggestions:
+        hint = f"Boss, I have {len(suggestions)} performance suggestion{'s' if len(suggestions) > 1 else ''} from my self-analysis. Say 'show suggestions' to hear them."
+        ui.write_log(f"RUBE: {hint}")
+
     try:
         threading.Thread(target=initialize_facial_matrix, daemon=True).start()
     except Exception: pass
@@ -183,6 +189,7 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
             "recent_conversation": recent_convo
         }
 
+        dispatch_start = time.time()
         try:
             ui.start_processing()
             llm_output = await asyncio.to_thread(get_llm_output, user_text=user_text, memory_block=memory_for_prompt)
@@ -234,7 +241,22 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         elif intent == "generate_analytics_report": threading.Thread(target=generate_analytics_report, kwargs=args, daemon=True).start()
         elif intent == "email_message": threading.Thread(target=send_email_message, kwargs=args, daemon=True).start()
         elif intent == "send_message": threading.Thread(target=send_message, kwargs=args, daemon=True).start()
-        
+        elif intent == "show_suggestions":
+            suggestions = get_startup_suggestions()
+            if suggestions:
+                for i, s in enumerate(suggestions, 1):
+                    ui.write_log(f"RUBE Suggestion {i}: {s}")
+                edge_speak(f"I have {len(suggestions)} suggestions ready. Check the log panel for the full list, boss.", ui)
+            else:
+                edge_speak("No suggestions on file yet. The n8n analysis workflow needs to run first.", ui)
+            continue
+
+        threading.Thread(
+            target=log_execution,
+            args=(intent, params, response, True, (time.time() - dispatch_start) * 1000),
+            daemon=True
+        ).start()
+
         if response and intent != "register_api_key":
              edge_speak(response, ui)
 
