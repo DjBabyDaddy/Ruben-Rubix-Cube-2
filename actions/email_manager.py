@@ -4,7 +4,20 @@ import time
 import pyautogui
 import webbrowser
 import urllib.parse
+import pygetwindow as gw
 from tts import edge_speak
+
+
+def _wait_for_gmail(timeout=20):
+    """Poll until a browser window containing 'Gmail' or 'Google' is active."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for title in [w.title for w in gw.getAllWindows() if w.title]:
+            if "gmail" in title.lower() or "compose" in title.lower() or "google" in title.lower():
+                time.sleep(1.5)   # let compose box finish rendering
+                return True
+        time.sleep(0.5)
+    return False
 
 def send_email_message(parameters, response, player, session_memory):
     target = parameters.get("receiver_email", "").strip()
@@ -27,7 +40,9 @@ def send_email_message(parameters, response, player, session_memory):
         gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&to={encoded_to}&su={encoded_su}&body={encoded_body}"
         
         webbrowser.open(gmail_url)
-        time.sleep(8.0)  # Gmail compose needs time to fully render before sending
+        if not _wait_for_gmail(timeout=20):
+            print("⚠️ Gmail window not detected — proceeding anyway after timeout.")
+            time.sleep(3.0)
 
         # PowerShell Attachment Injection
         if attachment and os.path.exists(attachment):

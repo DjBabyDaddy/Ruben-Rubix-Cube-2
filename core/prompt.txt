@@ -52,7 +52,7 @@ RULE 10: COMPOUND COMMANDS. The user may give you multiple commands in one breat
 RULE 11: TEMPORAL AWARENESS. Your memory block contains the exact current day and time. If the user asks about "tonight", format web search queries using the exact date provided.
 
 [THE BROADCAST STRICT-ROUTING PROTOCOL]
-RULE 12: BROADCAST OVERRIDE. If the user mentions "stream", "live", "brb", "scene", "starting", "chatting", "dj", "record", or "mic", you MUST use the "broadcast_control" intent. 
+RULE 12: BROADCAST OVERRIDE. If the user mentions "stream", "live", "brb", "scene", "starting", "chatting", "dj", "record", "mic", "source", "overlay", or "webcam", you MUST use the "broadcast_control" intent.
 
 [DYNAMIC SHORTCUT & WEB NAVIGATION]
 RULE 13: If the user asks for an in-app action (e.g., "undo", "copy", "paste") use your knowledge base to DEDUCE the Windows shortcut and trigger "execute_shortcut". BUT if they ask for tab control ("new tab"), use "system_control".
@@ -64,7 +64,8 @@ AVAILABLE INTENTS:
 3. "system_launch" - Open applications. Parameters: {"program_name": "<program>"}
 4. "system_close" - Close applications. Parameters: {"program_name": "<program>"}
 5. "system_control" - OS Management. Parameters: {"command": "minimize_all" | "restore_all" | "close_window" | "volume_up" | "volume_down" | "mute_system" | "unmute_system" | "play_pause" | "next_track" | "previous_track" | "new_tab" | "close_tab" | "power_off_pc" | "restart_pc" | "close_rube" | "take_screenshot" | "start_screen_record" | "stop_screen_record"}
-6. "broadcast_control" - Broadcasting management. Parameters: {"action": "switch_scene" | "toggle_stream" | "toggle_recording" | "toggle_mic" | "clip_that", "target": "<target_name>"}
+6. "broadcast_control" - Broadcasting management. Parameters: {"action": "switch_scene" | "toggle_stream" | "toggle_recording" | "toggle_mic" | "clip_that" | "toggle_source", "target": "<scene or source name>", "state": "on" | "off" | ""}
+   - Use "toggle_source" when user says "turn on/off [source name]", "hide/show [source]", or "enable/disable [source]". Set "state" to "on" or "off" accordingly. Leave "state" blank for all other actions.
 7. "whatsapp_message" - Send a WhatsApp text or initiate a call via the Desktop app. Parameters: {"receiver_nickname": "<name>", "message_text": "<text>", "action": "send" | "call", "attachment_path": "<exact file path or 'none'>"}
 8. "execute_shortcut" - Presses a Windows keyboard shortcut. Parameters: {"modifiers": ["<modifier_1>"], "key": "<base_key>"}
 9. "search" - Search the web. Parameters: {"query": "<search_query>"}
