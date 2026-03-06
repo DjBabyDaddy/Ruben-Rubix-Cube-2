@@ -41,6 +41,11 @@ def generate_social_post(parameters: dict, response: str, player, session_memory
         edge_speak(msg, player)
         return
 
+    # Enforce Twitter/X 280-character hard limit
+    if platform_target == "twitter" and len(post_content) > 280:
+        post_content = post_content[:277] + "..."
+        print(f"⚠️ Twitter post truncated to 280 characters.")
+
     payload = {
         "platform": platform_target,
         "content": post_content,

@@ -27,3 +27,7 @@ face-recognition
 pillow playwright
 firefox
 openwakeword
+pdfplumber
+python-docx
+openpyxl
+pywin32
