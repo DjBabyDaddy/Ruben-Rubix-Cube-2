@@ -1,15 +1,21 @@
 import os
-import subprocess
 import pygame
 import threading
 import time
 import queue
-import wave
 from memory.temporary_memory import TemporaryMemory
 import speech_to_text 
 
-VOICE_ID = "a0e99841-438c-4a64-b679-ae501e7d6091" 
 OUTPUT_FILE = "output.wav"
+
+_kokoro_pipeline = None
+
+def _get_pipeline():
+    global _kokoro_pipeline
+    if _kokoro_pipeline is None:
+        from kokoro import KPipeline
+        _kokoro_pipeline = KPipeline(lang_code='a')  # American English
+    return _kokoro_pipeline
 
 is_speaking = False
 is_processing = False
@@ -65,7 +71,7 @@ def _process_output(output_data, ui):
     try:
         _generate_tts(text)
     except Exception as e:
-        print(f"Cartesia Error: {e}")
+        print(f"TTS Error: {e}")
         is_speaking = False
         return
 
@@ -135,32 +141,15 @@ def _process_output(output_data, ui):
             expecting_reply_until[0] = 0.0
             
 def _generate_tts(text):
-    cartesia_key = os.getenv("CARTESIA_API_KEY")
-    if not cartesia_key:
-        subprocess.run(["say", text], check=False)
-        with wave.open(OUTPUT_FILE, 'wb') as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(44100)
-            f.writeframes(b'\x00' * 44100) 
-        return
+    import numpy as np
+    import soundfile as sf
 
-    from cartesia import Cartesia
-    client = Cartesia(api_key=cartesia_key)
-    
-    response_stream = client.tts.bytes(
-        model_id="sonic-english",
-        transcript=text,
-        voice={"mode": "id", "id": VOICE_ID},
-        output_format={"container": "wav", "encoding": "pcm_f32le", "sample_rate": 44100}
-    )
-    
-    with open(OUTPUT_FILE, "wb") as f:
-        if isinstance(response_stream, bytes):
-            f.write(response_stream)
-        else:
-            for chunk in response_stream:
-                f.write(chunk)
+    pipeline = _get_pipeline()
+    chunks = []
+    for _, _, audio in pipeline(text, voice='af_heart', speed=1.0):
+        chunks.append(audio)
+    audio_np = np.concatenate(chunks) if chunks else np.zeros(24000, dtype=np.float32)
+    sf.write(OUTPUT_FILE, audio_np, 24000)
 
 def stop_speaking():
     global is_speaking
