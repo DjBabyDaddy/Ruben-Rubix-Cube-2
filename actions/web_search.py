@@ -31,8 +31,8 @@ def conversational_readout(raw_data, query, player):
         system_instructions = "You are RUBE, a highly advanced AI. Your job is to translate raw JSON or web data into a natural, conversational spoken response for text-to-speech. For single-item lookups, be concise (1-3 sentences). For schedules, game slates, or multi-item lists, enumerate ALL items clearly — do not cut the list short. Do not use markdown, asterisks, or bullet points. Use natural transitions like 'also' and 'then' to connect multiple items."
         
         safe_data = str(raw_data)
-        if len(safe_data) > 3500:
-            safe_data = safe_data[:3500] + "... [DATA TRUNCATED]"
+        if len(safe_data) > 6000:
+            safe_data = safe_data[:6000] + "... [DATA TRUNCATED]"
             
         user_prompt = f"The user asked: '{query}'. The internet returned this raw data: {safe_data}"
         
@@ -43,7 +43,7 @@ def conversational_readout(raw_data, query, player):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.3,
-            max_tokens=400
+            max_tokens=800
         )
         final_text = completion.choices[0].message.content.strip()
         
