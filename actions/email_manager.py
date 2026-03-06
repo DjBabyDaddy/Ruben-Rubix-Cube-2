@@ -27,7 +27,7 @@ def send_email_message(parameters, response, player, session_memory):
         gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&to={encoded_to}&su={encoded_su}&body={encoded_body}"
         
         webbrowser.open(gmail_url)
-        time.sleep(5.0) 
+        time.sleep(8.0)  # Gmail compose needs time to fully render before sending
 
         # PowerShell Attachment Injection
         if attachment and os.path.exists(attachment):
