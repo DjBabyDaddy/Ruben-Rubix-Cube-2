@@ -48,7 +48,7 @@ def _gatekeeper_worker(ui):
         output_data = output_queue.get() 
         _process_output(output_data, ui)
         output_queue.task_done()
-        time.sleep(0.1)
+        time.sleep(0.02)
 
 def _process_output(output_data, ui):
     global is_speaking, is_processing
@@ -69,7 +69,7 @@ def _process_output(output_data, ui):
     except Exception: pass
 
     try:
-        _generate_tts(text)
+        total_audio_ms = _generate_tts(text)
     except Exception as e:
         print(f"TTS Error: {e}")
         is_speaking = False
@@ -84,20 +84,8 @@ def _process_output(output_data, ui):
         player_ui.write_log(f"RUBE: {text}")
 
     try:
-        audio_data = pygame.mixer.Sound(OUTPUT_FILE)
-        total_audio_ms = audio_data.get_length() * 1000
-    except Exception:
-        total_audio_ms = max(len(text) * 75, 1000)
-
-    try:
-        if player_ui: 
+        if player_ui:
             player_ui.start_speaking()
-
-        try:
-            silence = bytearray(int(44100 * 0.20 * 4)) 
-            pygame.mixer.Sound(buffer=silence).play()
-            time.sleep(0.20)
-        except Exception: pass
 
         pygame.mixer.music.load(OUTPUT_FILE)
         pygame.mixer.music.play()
@@ -146,10 +134,11 @@ def _generate_tts(text):
 
     pipeline = _get_pipeline()
     chunks = []
-    for _, _, audio in pipeline(text, voice='af_heart', speed=1.0):
+    for _, _, audio in pipeline(text, voice='am_michael', speed=1.0):
         chunks.append(audio)
     audio_np = np.concatenate(chunks) if chunks else np.zeros(24000, dtype=np.float32)
     sf.write(OUTPUT_FILE, audio_np, 24000)
+    return len(audio_np) / 24000 * 1000  # duration in ms
 
 def stop_speaking():
     global is_speaking
