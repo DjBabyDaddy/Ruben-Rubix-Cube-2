@@ -78,20 +78,6 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
                 with open(".env", "a") as f: f.write(f"\nANTHROPIC_API_KEY={text.strip()}\n")
                 break
 
-    cartesia_key = os.getenv("CARTESIA_API_KEY")
-    if not cartesia_key:
-        msg = "Boss, I require the Cartesia Sonic matrix for my vocal cords. Please paste your Cartesia API key into my terminal."
-        edge_speak(msg, ui)
-        while True:
-            source, text = await input_queue.get()
-            if source == "keyboard" and text.strip():
-                ack = "Key received. Connecting to the Sonic neural vocal cords now."
-                edge_speak(ack, ui)
-                await asyncio.sleep(2.5) 
-                os.environ["CARTESIA_API_KEY"] = text.strip()
-                with open(".env", "a") as f: f.write(f"\nCARTESIA_API_KEY={text.strip()}\n")
-                break
-
     memory = load_memory()
     user_name = memory.get("identity", {}).get("name", {}).get("value", "boss")
 
