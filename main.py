@@ -7,6 +7,7 @@ import os
 import platform
 import urllib.request
 import json
+import requests
 from dotenv import load_dotenv
 
 # THE FIX: Keeping the Email and Analytics Managers properly imported
@@ -15,7 +16,7 @@ from actions.email_manager import send_email_message
 
 load_dotenv()
 
-from speech_to_text import record_voice, stop_listening_flag
+from speech_to_text import record_voice, stop_listening_flag, initialize_vosk, vosk_ready
 from llm import get_llm_output
 import tts 
 from tts import edge_speak, stop_speaking, stop_event
@@ -40,13 +41,29 @@ from actions.vision import analyze_multimodal_view
 from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
 from actions.whatsapp import send_whatsapp_message, initialize_whatsapp_matrix
 from actions.social_manager import generate_social_post
+from actions.contact_manager import import_contacts, save_contact
 
 from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
-from memory.feedback_logger import log_execution
+from memory.feedback_logger import log_action_result, generate_self_assessment
 from memory.temporary_memory import TemporaryMemory
+from core.preflight import run_preflight
 
 interrupt_commands = ["stop", "cancel", "silence", "shut up", "shut down", "quiet", "abort"]
 temp_memory = TemporaryMemory()
+
+
+def _run_and_log(action_fn, intent_name, args):
+    """Wrap an action function to capture real execution time and success/failure."""
+    start = time.time()
+    success, error = True, ""
+    try:
+        action_fn(**args)
+    except Exception as e:
+        success, error = False, str(e)
+        print(f"ACTION ERROR [{intent_name}]: {e}")
+    finally:
+        elapsed_ms = (time.time() - start) * 1000
+        log_action_result(intent_name, args.get("parameters", {}), success, elapsed_ms, error)
 
 def fetch_geo_context_threaded():
     try:
@@ -60,12 +77,30 @@ def fetch_geo_context_threaded():
 
 async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     tts.start_gatekeeper_thread(ui)
-    
+
+    # Start boot animation while heavy systems load in background
+    ui.start_booting()
+
+    # Kick off all heavy initialization concurrently
+    threading.Thread(target=initialize_vosk, daemon=True).start()
+    threading.Thread(target=tts.preload_pipeline, daemon=True).start()
+
     temp_memory.parameters["location"] = {"city": "New Orleans", "region": "Louisiana", "timezone": "America/Chicago"}
     threading.Thread(target=fetch_geo_context_threaded, daemon=True).start()
 
+    def check_n8n_health():
+        webhook_url = os.getenv("N8N_WEBHOOK_URL")
+        if not webhook_url: return
+        try:
+            requests.head(webhook_url, timeout=5)
+            print("n8n pipeline is reachable.")
+        except Exception:
+            print("n8n pipeline is OFFLINE — social posts will fail.")
+    threading.Thread(target=check_n8n_health, daemon=True).start()
+
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     if not anthropic_key:
+        ui.stop_booting()
         msg = "Boss, I require an Anthropic API key to connect to the Claude cognitive matrix. Please paste it into my terminal."
         edge_speak(msg, ui)
         while True:
@@ -73,23 +108,32 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
             if source == "keyboard" and text.strip():
                 ack = "Key received. Linking my brain to the Claude network."
                 edge_speak(ack, ui)
-                await asyncio.sleep(2.5) 
+                await asyncio.sleep(2.5)
                 os.environ["ANTHROPIC_API_KEY"] = text.strip()
                 with open(".env", "a") as f: f.write(f"\nANTHROPIC_API_KEY={text.strip()}\n")
                 break
 
+    # Wait for Vosk to finish loading before greeting
+    await asyncio.to_thread(vosk_ready.wait)
+
+    ui.stop_booting()
+
     memory = load_memory()
     user_name = memory.get("identity", {}).get("name", {}).get("value", "boss")
 
-    await asyncio.sleep(0.8) 
+    # Self-assessment: analyze past execution data for actionable insights
+    local_insights = generate_self_assessment()
+    for insight in local_insights:
+        print(f"🔍 RUBE Self-Assessment: {insight}")
+
     hour = datetime.datetime.now().hour
     if hour < 12: greeting = f"Good morning, {user_name}. RUBE systems fully online."
     elif hour < 18: greeting = f"Good afternoon, {user_name}. RUBE systems fully online."
     else: greeting = f"Good evening, {user_name}. RUBE systems fully online."
-    
+
     edge_speak(greeting, ui)
 
-    suggestions = get_startup_suggestions()
+    suggestions = get_startup_suggestions() + local_insights
     if suggestions:
         hint = f"Boss, I have {len(suggestions)} performance suggestion{'s' if len(suggestions) > 1 else ''} from my self-analysis. Say 'show suggestions' to hear them."
         ui.write_log(f"RUBE: {hint}")
@@ -178,8 +222,15 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         dispatch_start = time.time()
         try:
             ui.start_processing()
-            llm_output = await asyncio.to_thread(get_llm_output, user_text=user_text, memory_block=memory_for_prompt)
+            llm_output = await asyncio.wait_for(
+                asyncio.to_thread(get_llm_output, user_text=user_text, memory_block=memory_for_prompt),
+                timeout=30.0
+            )
             ui.stop_processing()
+        except asyncio.TimeoutError:
+            ui.stop_processing()
+            edge_speak("My cognitive matrix timed out. Try again, boss.", ui)
+            continue
         except Exception:
             ui.stop_processing()
             continue
@@ -187,9 +238,30 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         intent = llm_output.get("intent", "chat")
         params = llm_output.get("parameters", {})
         response = llm_output.get("text")
-        
-        if llm_output.get("memory_update"): update_memory(llm_output.get("memory_update"))
+        confidence = llm_output.get("confidence", 1.0)
+
+        # Confidence gate: if the LLM is unsure, ask for clarification
+        if confidence < 0.5 and intent != "chat":
+            response = response or f"Boss, I'm not confident I understood that. Did you mean {intent.replace('_', ' ')}?"
+            intent = "chat"
+
+        if llm_output.get("memory_update"):
+            mem_update = llm_output.get("memory_update")
+            # Extract pending compound actions before persisting to memory
+            pending = mem_update.pop("pending_actions", []) if isinstance(mem_update, dict) else []
+            update_memory(mem_update)
+            for pa in pending:
+                if isinstance(pa, dict) and "intent" in pa:
+                    temp_memory.push_pending_action(pa)
+
         temp_memory.set_last_ai_response(response)
+
+        # Pre-flight validation: catch doomed-to-fail actions before wasting time
+        preflight_ok, preflight_reason = run_preflight(intent, params)
+        if not preflight_ok:
+            edge_speak(preflight_reason, ui)
+            log_action_result(intent, params, False, 0, "preflight_failed")
+            continue
 
         args = {"parameters": params, "response": response, "player": ui, "session_memory": temp_memory}
         serpapi_key = os.getenv("SERPAPI_API_KEY", "")
@@ -209,24 +281,28 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
                 try: ui.trigger_hotkey()
                 except: pass
                 web_search_module.AWAITING_KEY_NAME = key_name
-        elif intent == "vision_analysis": threading.Thread(target=analyze_multimodal_view, kwargs=args, daemon=True).start()
-        elif intent == "facial_recognition": threading.Thread(target=identity_scan_room, kwargs=args, daemon=True).start()
-        elif intent == "whatsapp_message": threading.Thread(target=send_whatsapp_message, kwargs=args, daemon=True).start()
-        elif intent == "system_control": threading.Thread(target=system_control, kwargs=args, daemon=True).start()
-        elif intent == "broadcast_control": threading.Thread(target=broadcast_control, kwargs=args, daemon=True).start()
-        elif intent == "web_navigate": threading.Thread(target=web_navigate, kwargs=args, daemon=True).start()
-        elif intent == "play_soundcloud": threading.Thread(target=play_soundcloud, kwargs=args, daemon=True).start()
-        elif intent == "system_launch": threading.Thread(target=system_launch, kwargs=args, daemon=True).start()
-        elif intent == "system_close": threading.Thread(target=system_close, kwargs=args, daemon=True).start()
-        elif intent == "play_media": threading.Thread(target=play_media, kwargs=args, daemon=True).start()
-        elif intent == "system_diagnostics": threading.Thread(target=system_diagnostics, kwargs=args, daemon=True).start() 
-        elif intent == "hardware_control": threading.Thread(target=hardware_control, kwargs=args, daemon=True).start()
-        elif intent == "execute_shortcut": threading.Thread(target=execute_shortcut, kwargs=args, daemon=True).start()
-        elif intent == "search": threading.Thread(target=web_search, kwargs={**args, "api_key": serpapi_key, "geo_context": geo_ctx}, daemon=True).start()
-        elif intent == "generate_social_post": threading.Thread(target=generate_social_post, kwargs=args, daemon=True).start()
-        elif intent == "generate_analytics_report": threading.Thread(target=generate_analytics_report, kwargs=args, daemon=True).start()
-        elif intent == "email_message": threading.Thread(target=send_email_message, kwargs=args, daemon=True).start()
-        elif intent == "send_message": threading.Thread(target=send_message, kwargs=args, daemon=True).start()
+        elif intent == "vision_analysis": threading.Thread(target=_run_and_log, args=(analyze_multimodal_view, "vision_analysis", args), daemon=True).start()
+        elif intent == "facial_recognition": threading.Thread(target=_run_and_log, args=(identity_scan_room, "facial_recognition", args), daemon=True).start()
+        elif intent == "whatsapp_message": threading.Thread(target=_run_and_log, args=(send_whatsapp_message, "whatsapp_message", args), daemon=True).start()
+        elif intent == "system_control": threading.Thread(target=_run_and_log, args=(system_control, "system_control", args), daemon=True).start()
+        elif intent == "broadcast_control": threading.Thread(target=_run_and_log, args=(broadcast_control, "broadcast_control", args), daemon=True).start()
+        elif intent == "web_navigate": threading.Thread(target=_run_and_log, args=(web_navigate, "web_navigate", args), daemon=True).start()
+        elif intent == "play_soundcloud": threading.Thread(target=_run_and_log, args=(play_soundcloud, "play_soundcloud", args), daemon=True).start()
+        elif intent == "system_launch": threading.Thread(target=_run_and_log, args=(system_launch, "system_launch", args), daemon=True).start()
+        elif intent == "system_close": threading.Thread(target=_run_and_log, args=(system_close, "system_close", args), daemon=True).start()
+        elif intent == "play_media": threading.Thread(target=_run_and_log, args=(play_media, "play_media", args), daemon=True).start()
+        elif intent == "system_diagnostics": threading.Thread(target=_run_and_log, args=(system_diagnostics, "system_diagnostics", args), daemon=True).start()
+        elif intent == "hardware_control": threading.Thread(target=_run_and_log, args=(hardware_control, "hardware_control", args), daemon=True).start()
+        elif intent == "execute_shortcut": threading.Thread(target=_run_and_log, args=(execute_shortcut, "execute_shortcut", args), daemon=True).start()
+        elif intent == "search":
+            search_args = {**args, "api_key": serpapi_key, "geo_context": geo_ctx}
+            threading.Thread(target=_run_and_log, args=(web_search, "search", search_args), daemon=True).start()
+        elif intent == "generate_social_post": threading.Thread(target=_run_and_log, args=(generate_social_post, "generate_social_post", args), daemon=True).start()
+        elif intent == "generate_analytics_report": threading.Thread(target=_run_and_log, args=(generate_analytics_report, "generate_analytics_report", args), daemon=True).start()
+        elif intent == "email_message": threading.Thread(target=_run_and_log, args=(send_email_message, "email_message", args), daemon=True).start()
+        elif intent == "send_message": threading.Thread(target=_run_and_log, args=(send_message, "send_message", args), daemon=True).start()
+        elif intent == "save_contact": threading.Thread(target=_run_and_log, args=(save_contact, "save_contact", args), daemon=True).start()
+        elif intent == "import_contacts": threading.Thread(target=_run_and_log, args=(import_contacts, "import_contacts", args), daemon=True).start()
         elif intent == "show_suggestions":
             suggestions = get_startup_suggestions()
             if suggestions:
@@ -237,14 +313,29 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
                 edge_speak("No suggestions on file yet. The n8n analysis workflow needs to run first.", ui)
             continue
 
-        threading.Thread(
-            target=log_execution,
-            args=(intent, params, response, True, (time.time() - dispatch_start) * 1000),
-            daemon=True
-        ).start()
-
         if response and intent != "register_api_key":
              edge_speak(response, ui)
+
+        # Compound command dispatch: process deferred actions sequentially
+        if temp_memory.has_pending_actions():
+            next_action = temp_memory.pop_pending_action()
+            if next_action and isinstance(next_action, dict):
+                deferred_intent = next_action.get("intent", "")
+                deferred_params = next_action.get("parameters", {})
+                deferred_args = {"parameters": deferred_params, "response": None, "player": ui, "session_memory": temp_memory}
+                def _dispatch_deferred(d_intent, d_args):
+                    time.sleep(3.0)  # let primary action settle
+                    DEFERRED_HANDLERS = {
+                        "whatsapp_message": send_whatsapp_message, "email_message": send_email_message,
+                        "system_launch": system_launch, "system_close": system_close,
+                        "web_navigate": web_navigate, "broadcast_control": broadcast_control,
+                        "execute_shortcut": execute_shortcut, "search": web_search,
+                        "system_control": system_control, "send_message": send_message,
+                    }
+                    handler = DEFERRED_HANDLERS.get(d_intent)
+                    if handler:
+                        _run_and_log(handler, d_intent, d_args)
+                threading.Thread(target=_dispatch_deferred, args=(deferred_intent, deferred_args), daemon=True).start()
 
         await asyncio.sleep(0.01)
 

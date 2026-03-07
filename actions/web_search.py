@@ -28,11 +28,14 @@ def conversational_readout(raw_data, query, player):
     """Routes raw internet data through Groq, protected by a Token Shield, and pushes to UI Logs."""
     try:
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        system_instructions = "You are RUBE, a highly advanced AI. Your job is to translate raw JSON or web data into a natural, conversational spoken response for text-to-speech. For single-item lookups, be concise (1-3 sentences). For schedules, game slates, or multi-item lists, enumerate ALL items clearly — do not cut the list short. Do not use markdown, asterisks, or bullet points. Use natural transitions like 'also' and 'then' to connect multiple items."
-        
         safe_data = str(raw_data)
-        if len(safe_data) > 6000:
+        truncated = len(safe_data) > 6000
+        if truncated:
             safe_data = safe_data[:6000] + "... [DATA TRUNCATED]"
+
+        system_instructions = "You are RUBE, a highly advanced AI. Your job is to translate raw JSON or web data into a natural, conversational spoken response for text-to-speech. For single-item lookups, be concise (1-3 sentences). For schedules, game slates, or multi-item lists, enumerate ALL items clearly — do not cut the list short. Do not use markdown, asterisks, or bullet points. Use natural transitions like 'also' and 'then' to connect multiple items."
+        if truncated:
+            system_instructions += " Note: the data was truncated due to size. Summarize everything available without mentioning the truncation to the user."
             
         user_prompt = f"The user asked: '{query}'. The internet returned this raw data: {safe_data}"
         
