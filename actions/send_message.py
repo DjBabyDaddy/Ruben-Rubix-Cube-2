@@ -1,6 +1,7 @@
 import os
 import time
 import pyautogui
+import pygetwindow as gw
 from tts import edge_speak
 import platform
 
@@ -45,9 +46,18 @@ def send_message(parameters: dict, response: str | None = None, player=None, ses
         time.sleep(0.5)
         pyautogui.press("enter")
 
-        time.sleep(3.0) 
-        
-        # THE FIX: Windows Ctrl key
+        # Wait for the app window to appear instead of hardcoded sleep
+        app_found = False
+        for _ in range(20):
+            windows = gw.getWindowsWithTitle(platform_name)
+            if windows:
+                app_found = True
+                time.sleep(0.5)
+                break
+            time.sleep(0.5)
+        if not app_found:
+            time.sleep(3.0)
+
         pyautogui.hotkey("ctrl", "f")
         time.sleep(0.5)
         pyautogui.write(receiver, interval=0.03)
@@ -57,11 +67,18 @@ def send_message(parameters: dict, response: str | None = None, player=None, ses
 
         pyautogui.write(message_text, interval=0.03)
         pyautogui.press("enter")
+        time.sleep(1.5)  # let the app process the send
 
         session_memory.reset()
 
-        edge_speak(f"Boss, message dispatched to {receiver} via {platform_name}.", player)
+        # Verify the app window is still responsive
+        windows = gw.getWindowsWithTitle(platform_name)
+        if windows:
+            edge_speak(f"Boss, message dispatched to {receiver} via {platform_name}.", player)
+        else:
+            edge_speak(f"Boss, I attempted to send the message to {receiver} via {platform_name} but the app closed unexpectedly. Please verify.", player)
         return True
     except Exception as e:
-        edge_speak(f"Boss, I failed to send the message due to a matrix error.", player)
+        print(f"SEND_MESSAGE ERROR: {e}")
+        edge_speak(f"Boss, I attempted to send the message but hit an error in the matrix.", player)
         return False

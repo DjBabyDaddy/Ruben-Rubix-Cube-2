@@ -74,6 +74,16 @@ class RubeUI:
 
         self.speaking = False
         self.processing = False
+        self.booting = False
+        self._boot_messages = [
+            "Initializing voice matrix...",
+            "Loading cognitive systems...",
+            "Connecting to neural network...",
+            "Calibrating audio sensors...",
+            "Activating command protocols...",
+        ]
+        self._boot_msg_index = 0
+        self._boot_timer = None
         
         self.subtitle_id = self.canvas.create_text(
             size[0] // 2,
@@ -134,6 +144,12 @@ class RubeUI:
         file_path = event.data
         if file_path.startswith('{') and file_path.endswith('}'):
             file_path = file_path[1:-1]
+
+        # Auto-import VCF contact files
+        if file_path.lower().endswith('.vcf') and self.on_text_submit:
+            self.on_text_submit(f'import contacts "{file_path}"')
+            return
+
         self.entry.insert(tk.END, f'"{file_path}" ')
 
     def start_move(self, event):
@@ -268,6 +284,26 @@ class RubeUI:
     def start_processing(self): self.processing = True
     def stop_processing(self): self.processing = False
 
+    def start_booting(self):
+        self.booting = True
+        self._boot_msg_index = 0
+        self._cycle_boot_message()
+
+    def stop_booting(self):
+        self.booting = False
+        if self._boot_timer:
+            self.root.after_cancel(self._boot_timer)
+            self._boot_timer = None
+        self.canvas.itemconfig(self.subtitle_id, text="")
+
+    def _cycle_boot_message(self):
+        if not self.booting:
+            return
+        msg = self._boot_messages[self._boot_msg_index % len(self._boot_messages)]
+        self.canvas.itemconfig(self.subtitle_id, text=msg)
+        self._boot_msg_index += 1
+        self._boot_timer = self.root.after(2000, self._cycle_boot_message)
+
     def trigger_random_slice(self):
         self.animating_slice = True
         self.slice_axis = random.choice(['x', 'y', 'z'])
@@ -283,8 +319,12 @@ class RubeUI:
         self.global_y += 0.005 
         self.global_x = math.sin(now * 0.3) * 0.2 + 0.5 
 
-        if self.processing:
-            self.slice_speed = 0.12 
+        if self.booting:
+            self.slice_speed = 0.15
+            if not self.animating_slice:
+                self.trigger_random_slice()
+        elif self.processing:
+            self.slice_speed = 0.12
             if not self.animating_slice:
                 self.trigger_random_slice()
         elif self.speaking:

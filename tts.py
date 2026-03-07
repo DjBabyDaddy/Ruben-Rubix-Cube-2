@@ -9,12 +9,15 @@ import speech_to_text
 OUTPUT_FILE = "output.wav"
 
 _kokoro_pipeline = None
+_pipeline_lock = threading.Lock()
 
 def _get_pipeline():
     global _kokoro_pipeline
     if _kokoro_pipeline is None:
-        from kokoro import KPipeline
-        _kokoro_pipeline = KPipeline(lang_code='a')  # American English
+        with _pipeline_lock:
+            if _kokoro_pipeline is None:
+                from kokoro import KPipeline
+                _kokoro_pipeline = KPipeline(lang_code='a')  # American English
     return _kokoro_pipeline
 
 is_speaking = False
@@ -139,6 +142,11 @@ def _generate_tts(text):
     audio_np = np.concatenate(chunks) if chunks else np.zeros(24000, dtype=np.float32)
     sf.write(OUTPUT_FILE, audio_np, 24000)
     return len(audio_np) / 24000 * 1000  # duration in ms
+
+def preload_pipeline():
+    """Preload Kokoro TTS pipeline in a background thread during boot."""
+    _get_pipeline()
+    print("TTS pipeline preloaded.")
 
 def stop_speaking():
     global is_speaking

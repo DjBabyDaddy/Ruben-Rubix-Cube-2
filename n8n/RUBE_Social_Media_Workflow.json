@@ -1,0 +1,264 @@
+{
+  "name": "RUBE Social Media Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rube-social",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "RUBE Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract RUBE payload\nconst payload = $input.first().json.body || $input.first().json;\n\nconst platform = (payload.platform || 'all').toLowerCase();\nconst content = payload.content || '';\nconst mediaBase64 = payload.media_base64 || '';\nconst mediaUrl = payload.media_url || '';\nconst mediaFilename = payload.media_filename || 'rube_graphic.jpg';\nconst mediaPath = payload.media_path || '';\n\n// Determine if we have media\nconst hasMedia = !!(mediaBase64 || mediaUrl);\n\n// If base64 exists, convert to binary buffer\nlet binaryData = null;\nif (mediaBase64) {\n  binaryData = Buffer.from(mediaBase64, 'base64');\n}\n\nconst output = {\n  platform,\n  content,\n  hasMedia,\n  mediaUrl,\n  mediaFilename,\n  mediaPath,\n  mediaBase64Length: mediaBase64.length\n};\n\n// Attach binary if available\nif (binaryData) {\n  const items = [{\n    json: output,\n    binary: {\n      image: {\n        data: mediaBase64,\n        mimeType: 'image/jpeg',\n        fileName: mediaFilename\n      }\n    }\n  }];\n  return items;\n}\n\nreturn [{ json: output }];"
+      },
+      "id": "process-media",
+      "name": "Process Media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "instagram",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 1,
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "twitter",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 2,
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "discord",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputIndex": 3,
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "all",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "platform-router",
+      "name": "Route by Platform",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.INSTAGRAM_BUSINESS_ACCOUNT_ID }}/media",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.mediaUrl }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.content }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.FACEBOOK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ig-create-container",
+      "name": "IG: Create Media Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 100],
+      "notes": "Creates an Instagram media container. Requires:\n- INSTAGRAM_BUSINESS_ACCOUNT_ID (env var)\n- FACEBOOK_ACCESS_TOKEN (env var)\n- media_url from RUBE payload (public image URL)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.INSTAGRAM_BUSINESS_ACCOUNT_ID }}/media_publish",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.FACEBOOK_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ig-publish",
+      "name": "IG: Publish Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 100],
+      "notes": "Publishes the media container created in the previous step."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twitter.com/2/tweets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.content }) }}",
+        "options": {}
+      },
+      "id": "twitter-post",
+      "name": "Twitter/X: Post Tweet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 300],
+      "notes": "Posts to Twitter/X. Configure OAuth2 credentials in n8n:\n- Client ID and Secret from Twitter Developer Portal\n- Set up OAuth 2.0 with tweet.write scope"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content, embeds: $json.hasMedia ? [{ image: { url: $json.mediaUrl } }] : [] }) }}",
+        "options": {}
+      },
+      "id": "discord-post",
+      "name": "Discord: Send Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 500],
+      "notes": "Posts to Discord via webhook URL.\nSet DISCORD_WEBHOOK_URL in n8n environment variables.\nGet webhook URL from Discord: Server Settings > Integrations > Webhooks"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 'All' platform: fan out to Instagram, Twitter, and Discord\n// This node passes the data through unchanged.\n// Connect its outputs to all three platform nodes.\nreturn $input.all();"
+      },
+      "id": "fan-out-all",
+      "name": "Fan Out: All Platforms",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 720],
+      "notes": "When platform is 'all', this passes data to all three platform nodes.\nConnect this node's output to:\n1. IG: Create Media Container\n2. Twitter/X: Post Tweet\n3. Discord: Send Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// If no media_url but base64 exists, upload to imgbb for a public URL\n// This is needed because Instagram Graph API requires a PUBLIC image URL\n\nconst input = $input.first().json;\n\n// If we already have a media_url (from Pollinations), pass through\nif (input.mediaUrl) {\n  return [{ json: input }];\n}\n\n// If we have base64 but no URL, upload to imgbb (free image host)\n// You need an IMGBB_API_KEY env var — get one free at https://api.imgbb.com/\nconst imgbbKey = $env.IMGBB_API_KEY;\nif (input.mediaBase64Length > 0 && imgbbKey) {\n  const binary = $input.first().binary;\n  if (binary && binary.image) {\n    try {\n      const response = await this.helpers.httpRequest({\n        method: 'POST',\n        url: 'https://api.imgbb.com/1/upload',\n        body: {\n          key: imgbbKey,\n          image: binary.image.data\n        },\n        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }\n      });\n      input.mediaUrl = response.data.url;\n      return [{ json: input }];\n    } catch (e) {\n      // Fall through without image\n    }\n  }\n}\n\n// No image available — post text only\nreturn [{ json: input }];"
+      },
+      "id": "ensure-public-url",
+      "name": "Ensure Public Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 100],
+      "notes": "Instagram requires a PUBLIC image URL.\nIf RUBE sent media_url (Pollinations), it passes through.\nIf only base64 exists, uploads to imgbb for a public URL.\nSet IMGBB_API_KEY env var (free at https://api.imgbb.com/)"
+    },
+    {
+      "parameters": {
+        "content": "## RUBE Social Media Pipeline — Setup Guide\n\n### Required Environment Variables (set in n8n Settings > Environment):\n\n**Instagram:**\n- `INSTAGRAM_BUSINESS_ACCOUNT_ID` — Your IG Business Account ID\n- `FACEBOOK_ACCESS_TOKEN` — Long-lived Page Access Token\n- `IMGBB_API_KEY` — Free at https://api.imgbb.com/ (fallback image hosting)\n\n**Twitter/X:**\n- Configure OAuth2 credentials in n8n Credentials page\n- Needs tweet.write scope from Twitter Developer Portal\n\n**Discord:**\n- `DISCORD_WEBHOOK_URL` — From Server Settings > Integrations > Webhooks\n\n### How It Works:\n1. RUBE sends POST to webhook with: platform, content, media_base64, media_url\n2. Process Media node decodes base64 into binary\n3. Router sends to correct platform(s)\n4. Instagram: Ensures public URL → Creates media container → Publishes\n5. Twitter: Posts tweet via API v2\n6. Discord: Sends via webhook with optional image embed\n\n### Testing:\n- Activate the workflow\n- Copy the webhook URL (shown in RUBE Webhook node)\n- Set it as N8N_WEBHOOK_URL in RUBE's .env file\n- Tell RUBE: \"Post to Instagram about [topic]\"",
+        "height": 580,
+        "width": 420
+      },
+      "id": "setup-guide",
+      "name": "Setup Guide",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1420, 60]
+    }
+  ],
+  "connections": {
+    "RUBE Webhook": {
+      "main": [
+        [{ "node": "Process Media", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process Media": {
+      "main": [
+        [{ "node": "Route by Platform", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route by Platform": {
+      "main": [
+        [{ "node": "Ensure Public Image URL", "type": "main", "index": 0 }],
+        [{ "node": "Twitter/X: Post Tweet", "type": "main", "index": 0 }],
+        [{ "node": "Discord: Send Webhook", "type": "main", "index": 0 }],
+        [{ "node": "Fan Out: All Platforms", "type": "main", "index": 0 }]
+      ]
+    },
+    "Ensure Public Image URL": {
+      "main": [
+        [{ "node": "IG: Create Media Container", "type": "main", "index": 0 }]
+      ]
+    },
+    "IG: Create Media Container": {
+      "main": [
+        [{ "node": "IG: Publish Post", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fan Out: All Platforms": {
+      "main": [
+        [
+          { "node": "Ensure Public Image URL", "type": "main", "index": 0 },
+          { "node": "Twitter/X: Post Tweet", "type": "main", "index": 0 },
+          { "node": "Discord: Send Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "RUBE" },
+    { "name": "Social Media" }
+  ]
+}
