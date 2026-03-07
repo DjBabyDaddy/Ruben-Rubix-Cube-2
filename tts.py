@@ -143,6 +143,11 @@ def _generate_tts(text):
     sf.write(OUTPUT_FILE, audio_np, 24000)
     return len(audio_np) / 24000 * 1000  # duration in ms
 
+def preload_pipeline():
+    """Preload Kokoro TTS pipeline in a background thread during boot."""
+    _get_pipeline()
+    print("TTS pipeline preloaded.")
+
 def stop_speaking():
     global is_speaking
     stop_event.set()
