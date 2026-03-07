@@ -120,10 +120,17 @@ def broadcast_control(parameters, response, player, session_memory):
     if "obs" in broadcasters:
         client = get_obs_client()
         if client:
-            execute_obs_api(client, action, target, state)
+            try:
+                execute_obs_api(client, action, target, state)
+                edge_speak(f"Broadcast command executed, boss.", player)
+            except Exception as e:
+                print(f"OBS API Error: {e}")
+                edge_speak(f"Boss, I attempted the broadcast command but OBS returned an error.", player)
             return
         else:
             edge_speak("Boss, OBS blocked my API connection. Please uncheck Enable Authentication in the WebSocket tools.", player)
-    
+            return
+
     if "streamlabs" in broadcasters:
         execute_win_streamlabs(action, target)
+        edge_speak(f"Streamlabs command sent, boss.", player)
