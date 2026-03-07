@@ -42,5 +42,7 @@ def execute_shortcut(parameters: dict, response: str, player, session_memory):
             for m in win_mods: pyautogui.press(m)
         elif final_key:
             pyautogui.press(final_key)
+        edge_speak("Shortcut executed, boss.", player)
     except Exception as e:
         print(f"⚠️ Keyboard Matrix Error: {e}")
+        edge_speak("Boss, that shortcut failed to execute.", player)
