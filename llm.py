@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 import anthropic
+from memory.feedback_logger import get_recent_lessons
 
 # CONFIGURATION
 PROMPT_PATH = "core/prompt.txt"
@@ -55,6 +56,11 @@ def get_llm_output(user_text: str, memory_block: dict = None) -> dict:
     
     dynamic_system_prompt = f"{SYSTEM_PROMPT}\n\n[SYSTEM CLOCK: {current_time}]\n\n[PERMANENT MEMORY]\n{memory_str}\n\n[RECENT CONVERSATION BUFFER]\n{recent_convo}"
 
+    # Inject recent failure patterns so the LLM can learn from mistakes
+    lessons = get_recent_lessons(50)
+    if lessons:
+        dynamic_system_prompt += f"\n\n[RECENT LESSONS - Avoid repeating these failure patterns]\n{lessons}"
+
     try:
         # THE FIX: Using the brand new claude-sonnet-4-6 model since the 3.5 series was deprecated
         response = client.messages.create(
@@ -73,7 +79,8 @@ def get_llm_output(user_text: str, memory_block: dict = None) -> dict:
                 "intent": parsed.get("intent", "chat"),
                 "parameters": parsed.get("parameters", {}),
                 "text": parsed.get("text", "Task complete, boss."),
-                "memory_update": parsed.get("memory_update")
+                "memory_update": parsed.get("memory_update"),
+                "confidence": parsed.get("confidence", 1.0)
             }
         return {"intent": "chat", "text": "I apologize, boss, my reasoning matrix misunderstood that format."}
         

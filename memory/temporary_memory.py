@@ -8,6 +8,7 @@ class TemporaryMemory:
         self.parameters = {}
         self.last_search_query = None
         self.last_search_result = None
+        self.pending_actions = []  # Queue for compound command decomposition
 
     def set_last_user_text(self, text):
         self.last_user_text = text
@@ -40,9 +41,21 @@ class TemporaryMemory:
     def get_last_search(self):
         return self.last_search_query, self.last_search_result
 
+    def push_pending_action(self, action: dict):
+        """Queue a deferred action from compound command decomposition."""
+        self.pending_actions.append(action)
+
+    def pop_pending_action(self):
+        """Dequeue the next pending action, or None if empty."""
+        return self.pending_actions.pop(0) if self.pending_actions else None
+
+    def has_pending_actions(self) -> bool:
+        return len(self.pending_actions) > 0
+
     def reset(self):
         self.current_question = None
         self.pending_intent = None
         self.parameters = {}
         self.last_search_query = None
         self.last_search_result = None
+        self.pending_actions = []
