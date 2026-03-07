@@ -16,7 +16,7 @@ from actions.email_manager import send_email_message
 
 load_dotenv()
 
-from speech_to_text import record_voice, stop_listening_flag
+from speech_to_text import record_voice, stop_listening_flag, initialize_vosk, vosk_ready
 from llm import get_llm_output
 import tts 
 from tts import edge_speak, stop_speaking, stop_event
@@ -41,6 +41,7 @@ from actions.vision import analyze_multimodal_view
 from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
 from actions.whatsapp import send_whatsapp_message, initialize_whatsapp_matrix
 from actions.social_manager import generate_social_post
+from actions.contact_manager import import_contacts, save_contact
 
 from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
 from memory.feedback_logger import log_execution
@@ -61,7 +62,14 @@ def fetch_geo_context_threaded():
 
 async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     tts.start_gatekeeper_thread(ui)
-    
+
+    # Start boot animation while heavy systems load in background
+    ui.start_booting()
+
+    # Kick off all heavy initialization concurrently
+    threading.Thread(target=initialize_vosk, daemon=True).start()
+    threading.Thread(target=tts.preload_pipeline, daemon=True).start()
+
     temp_memory.parameters["location"] = {"city": "New Orleans", "region": "Louisiana", "timezone": "America/Chicago"}
     threading.Thread(target=fetch_geo_context_threaded, daemon=True).start()
 
@@ -70,13 +78,14 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         if not webhook_url: return
         try:
             requests.head(webhook_url, timeout=5)
-            print("✅ n8n pipeline is reachable.")
+            print("n8n pipeline is reachable.")
         except Exception:
-            print("⚠️ n8n pipeline is OFFLINE — social posts will fail.")
+            print("n8n pipeline is OFFLINE — social posts will fail.")
     threading.Thread(target=check_n8n_health, daemon=True).start()
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     if not anthropic_key:
+        ui.stop_booting()
         msg = "Boss, I require an Anthropic API key to connect to the Claude cognitive matrix. Please paste it into my terminal."
         edge_speak(msg, ui)
         while True:
@@ -84,20 +93,24 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
             if source == "keyboard" and text.strip():
                 ack = "Key received. Linking my brain to the Claude network."
                 edge_speak(ack, ui)
-                await asyncio.sleep(2.5) 
+                await asyncio.sleep(2.5)
                 os.environ["ANTHROPIC_API_KEY"] = text.strip()
                 with open(".env", "a") as f: f.write(f"\nANTHROPIC_API_KEY={text.strip()}\n")
                 break
 
+    # Wait for Vosk to finish loading before greeting
+    await asyncio.to_thread(vosk_ready.wait)
+
+    ui.stop_booting()
+
     memory = load_memory()
     user_name = memory.get("identity", {}).get("name", {}).get("value", "boss")
 
-    await asyncio.sleep(0.8) 
     hour = datetime.datetime.now().hour
     if hour < 12: greeting = f"Good morning, {user_name}. RUBE systems fully online."
     elif hour < 18: greeting = f"Good afternoon, {user_name}. RUBE systems fully online."
     else: greeting = f"Good evening, {user_name}. RUBE systems fully online."
-    
+
     edge_speak(greeting, ui)
 
     suggestions = get_startup_suggestions()
@@ -245,6 +258,8 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         elif intent == "generate_analytics_report": threading.Thread(target=generate_analytics_report, kwargs=args, daemon=True).start()
         elif intent == "email_message": threading.Thread(target=send_email_message, kwargs=args, daemon=True).start()
         elif intent == "send_message": threading.Thread(target=send_message, kwargs=args, daemon=True).start()
+        elif intent == "save_contact": threading.Thread(target=save_contact, kwargs=args, daemon=True).start()
+        elif intent == "import_contacts": threading.Thread(target=import_contacts, kwargs=args, daemon=True).start()
         elif intent == "show_suggestions":
             suggestions = get_startup_suggestions()
             if suggestions:
