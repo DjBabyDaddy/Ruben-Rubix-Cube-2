@@ -7,6 +7,7 @@ import os
 import platform
 import urllib.request
 import json
+import requests
 from dotenv import load_dotenv
 
 # THE FIX: Keeping the Email and Analytics Managers properly imported
@@ -63,6 +64,16 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     
     temp_memory.parameters["location"] = {"city": "New Orleans", "region": "Louisiana", "timezone": "America/Chicago"}
     threading.Thread(target=fetch_geo_context_threaded, daemon=True).start()
+
+    def check_n8n_health():
+        webhook_url = os.getenv("N8N_WEBHOOK_URL")
+        if not webhook_url: return
+        try:
+            requests.head(webhook_url, timeout=5)
+            print("✅ n8n pipeline is reachable.")
+        except Exception:
+            print("⚠️ n8n pipeline is OFFLINE — social posts will fail.")
+    threading.Thread(target=check_n8n_health, daemon=True).start()
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     if not anthropic_key:
@@ -178,8 +189,15 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         dispatch_start = time.time()
         try:
             ui.start_processing()
-            llm_output = await asyncio.to_thread(get_llm_output, user_text=user_text, memory_block=memory_for_prompt)
+            llm_output = await asyncio.wait_for(
+                asyncio.to_thread(get_llm_output, user_text=user_text, memory_block=memory_for_prompt),
+                timeout=30.0
+            )
             ui.stop_processing()
+        except asyncio.TimeoutError:
+            ui.stop_processing()
+            edge_speak("My cognitive matrix timed out. Try again, boss.", ui)
+            continue
         except Exception:
             ui.stop_processing()
             continue
