@@ -9,12 +9,15 @@ import speech_to_text
 OUTPUT_FILE = "output.wav"
 
 _kokoro_pipeline = None
+_pipeline_lock = threading.Lock()
 
 def _get_pipeline():
     global _kokoro_pipeline
     if _kokoro_pipeline is None:
-        from kokoro import KPipeline
-        _kokoro_pipeline = KPipeline(lang_code='a')  # American English
+        with _pipeline_lock:
+            if _kokoro_pipeline is None:
+                from kokoro import KPipeline
+                _kokoro_pipeline = KPipeline(lang_code='a')  # American English
     return _kokoro_pipeline
 
 is_speaking = False

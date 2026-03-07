@@ -34,7 +34,7 @@ def get_obs_client():
     hosts_to_try = ['127.0.0.1', 'localhost']
     for host in hosts_to_try:
         try:
-            client = obs.ReqClient(host=host, port=4455, password='', timeout=0.5)
+            client = obs.ReqClient(host=host, port=4455, password='', timeout=2)
             return client
         except Exception:
             continue
