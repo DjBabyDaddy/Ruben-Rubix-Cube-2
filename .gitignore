@@ -27,6 +27,9 @@ speech.mp3
 # Model weights (large binary files)
 model/
 
+# User contacts and personal data (NEVER push)
+memory/memory.json
+
 # WhatsApp session data
 memory/whatsapp_session/
 
