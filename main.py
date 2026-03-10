@@ -42,6 +42,10 @@ from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
 from actions.whatsapp import send_whatsapp_message, initialize_whatsapp_matrix
 from actions.social_manager import generate_social_post
 from actions.contact_manager import import_contacts, save_contact
+from actions.self_improver import (
+    handle_review_pending, handle_approve, handle_reject,
+    handle_request_file_edit, handle_self_improve, get_reminder_message
+)
 
 from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
 from memory.feedback_logger import log_action_result, generate_self_assessment
@@ -312,9 +316,33 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
             else:
                 edge_speak("No suggestions on file yet. The n8n analysis workflow needs to run first.", ui)
             continue
+        elif intent == "review_pending_edits":
+            handle_review_pending(**args)
+            continue
+        elif intent == "approve_edit":
+            handle_approve(**args)
+            continue
+        elif intent == "reject_edit":
+            handle_reject(**args)
+            continue
+        elif intent == "request_file_edit":
+            threading.Thread(target=_run_and_log, args=(handle_request_file_edit, "request_file_edit", args), daemon=True).start()
+        elif intent == "self_improve":
+            threading.Thread(target=_run_and_log, args=(handle_self_improve, "self_improve", args), daemon=True).start()
 
         if response and intent != "register_api_key":
              edge_speak(response, ui)
+
+        # Periodic reminder: nudge Trell about pending edits every 5 interactions
+        temp_memory.increment_interaction()
+        if temp_memory.get_interaction_count() % 5 == 0:
+            reminder = get_reminder_message(temp_memory)
+            if reminder:
+                ui.write_log(f"RUBE: {reminder}")
+                # Only speak it every 15 interactions to avoid nagging
+                if temp_memory.get_interaction_count() % 15 == 0:
+                    edge_speak(reminder, ui)
+                temp_memory.reset_interaction_count()
 
         # Compound command dispatch: process deferred actions sequentially
         if temp_memory.has_pending_actions():
