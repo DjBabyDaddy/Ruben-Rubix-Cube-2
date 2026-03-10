@@ -54,6 +54,23 @@ def _check_social_post(intent, params):
     return True, ""
 
 
+def _check_file_edit(intent, params):
+    file_path = params.get("file_path", "").strip()
+    if not file_path:
+        return False, "Boss, I need to know which file to edit."
+    reason = params.get("reason", "").strip()
+    if not reason:
+        return False, "Boss, I need a reason for the edit so my subagent knows what to fix."
+    return True, ""
+
+
+def _check_edit_id(intent, params):
+    edit_id = str(params.get("edit_id", "")).strip()
+    if not edit_id:
+        return False, "Boss, I need the edit ID. Say 'show pending edits' to see available IDs."
+    return True, ""
+
+
 # Registry: intent -> checker function
 PREFLIGHT_CHECKS = {
     "whatsapp_message": _check_whatsapp,
@@ -61,6 +78,9 @@ PREFLIGHT_CHECKS = {
     "broadcast_control": _check_broadcast,
     "import_contacts": _check_file_path,
     "generate_social_post": _check_social_post,
+    "request_file_edit": _check_file_edit,
+    "approve_edit": _check_edit_id,
+    "reject_edit": _check_edit_id,
 }
 
 
