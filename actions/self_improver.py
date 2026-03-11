@@ -14,6 +14,7 @@ from datetime import datetime
 from tts import edge_speak
 from actions import file_editor
 from memory.feedback_logger import generate_self_assessment
+from llm import load_brain
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -153,11 +154,19 @@ def invoke_subagent(file_path, reason):
         print(f"⚠️ Subagent: could not read {file_path}: {content}")
         return None
 
+    # Load the AI framework knowledge base so the subagent reasons against proven patterns
+    brain = load_brain()
+    brain_section = (
+        f"\n\n[AI FRAMEWORK KNOWLEDGE BASE - Reference these proven patterns when proposing code changes]\n{brain}"
+        if brain else ""
+    )
+
     prompt = (
         f"You are analyzing a Python file from the RUBE AI assistant project.\n"
         f"File: {file_path}\n"
         f"Issue: {reason}\n\n"
-        f"Current file content:\n```\n{content}\n```\n\n"
+        f"Current file content:\n```\n{content}\n```\n"
+        f"{brain_section}\n\n"
         f"Propose a fix. Return ONLY a JSON object with exactly these keys:\n"
         f'{{"proposed_fix": "<the complete new file content>", "reason": "<one sentence explaining what changed>"}}\n'
         f"No markdown. No explanation outside the JSON."

@@ -7,6 +7,7 @@ from memory.feedback_logger import get_recent_lessons
 
 # CONFIGURATION
 PROMPT_PATH = "core/prompt.txt"
+BRAIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RUBE_SUPER_BRAIN.md")
 
 print("🧠 RUBE is linking his cognitive matrix to the Claude 4.6 Sonnet network...")
 
@@ -18,6 +19,17 @@ def load_system_prompt() -> str:
         return "You are RUBE. Respond only in JSON format."
     except Exception:
         return "You are RUBE. Respond in JSON."
+
+def load_brain() -> str:
+    """Load RUBE's AI framework knowledge base (LangGraph, CrewAI, MCP, LlamaIndex, Anthropic).
+    Call this during self-improvement tasks so RUBE reasons against best-practice patterns."""
+    try:
+        if os.path.exists(BRAIN_PATH):
+            with open(BRAIN_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+    except Exception:
+        pass
+    return ""
 
 SYSTEM_PROMPT = load_system_prompt()
 
@@ -38,8 +50,12 @@ def safe_json_parse(text: str) -> dict | None:
     except Exception:
         return None
 
-def get_llm_output(user_text: str, memory_block: dict = None) -> dict:
-    """The primary cognitive routing matrix powered by Claude 4.6 Sonnet."""
+def get_llm_output(user_text: str, memory_block: dict = None, use_brain: bool = False) -> dict:
+    """The primary cognitive routing matrix powered by Claude 4.6 Sonnet.
+
+    Pass use_brain=True from self_improver.py to inject the AI framework knowledge
+    base (RUBE_SUPER_BRAIN.md) so RUBE reasons against proven patterns when
+    proposing code changes."""
     if not user_text or not user_text.strip():
         return {"intent": "chat", "text": "Boss, I didn't catch that."}
         
@@ -60,6 +76,13 @@ def get_llm_output(user_text: str, memory_block: dict = None) -> dict:
     lessons = get_recent_lessons(50)
     if lessons:
         dynamic_system_prompt += f"\n\n[RECENT LESSONS - Avoid repeating these failure patterns]\n{lessons}"
+
+    # Inject AI framework knowledge base for self-improvement calls
+    # Keeps all standard calls lean — only loads the brain when explicitly needed
+    if use_brain:
+        brain = load_brain()
+        if brain:
+            dynamic_system_prompt += f"\n\n[AI FRAMEWORK KNOWLEDGE BASE - Reference these proven patterns when proposing code changes]\n{brain}"
 
     try:
         # THE FIX: Using the brand new claude-sonnet-4-6 model since the 3.5 series was deprecated
