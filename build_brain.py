@@ -1,51 +1,71 @@
-import asyncio
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
-from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+"""
+build_brain.py — RUBE Super Brain compiler
 
-async def build_super_brain():
-    # Paste your 20 URLs here
-    urls = [
-        "https://langchain-ai.github.io/langgraph/",
-        "https://docs.crewai.com/",
-        "https://modelcontextprotocol.io/specification/",
-        "https://docs.anthropic.com/en/docs/build-with-claude/computer-use",
-        "https://docs.llamaindex.ai/en/stable/"
-        # ... add the rest ...
-    ]
-    
-    # PRO TWEAK: Strip out useless tokens (links, images, nav bars)
-    config = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        markdown_generator=DefaultMarkdownGenerator(
-            options={
-                "ignore_links": True,  # Saves thousands of tokens
-                "ignore_images": True, # Removes broken ![alt] tags
-                "escape_html": True
-            }
-        )
-    )
+Crawls AI framework documentation sites and compiles them into
+RUBE_SUPER_BRAIN.md so RUBE's self-improvement pipeline can reason
+against proven patterns when proposing code changes.
 
-    print("🚀 Initializing Project Rube Brain Extraction...")
-    
-    async with AsyncWebCrawler() as crawler:
-        with open("RUBE_SUPER_BRAIN.md", "w", encoding="utf-8") as f:
-            # Setting the overarching system instructions
-            f.write("# PROJECT RUBE: MASTER ARCHITECTURE KNOWLEDGE\n")
-            f.write("INSTRUCTIONS: The following context is divided into XML tags. Always read the relevant <source> tags before generating system code or proposing logic.\n\n")
-            
-            for url in urls:
-                print(f"🧠 Assimilating: {url}")
-                result = await crawler.arun(url=url, config=config)
-                
-                if result.success:
-                    # PRO TWEAK: Wrapping in XML tags for Anthropic models
+Powered by Firecrawl for reliable, JS-rendered doc site extraction.
+"""
+
+import os
+from firecrawl import FirecrawlApp
+
+BRAIN_OUTPUT = "RUBE_SUPER_BRAIN.md"
+
+URLS = [
+    "https://langchain-ai.github.io/langgraph/",
+    "https://docs.crewai.com/",
+    "https://modelcontextprotocol.io/specification/",
+    "https://docs.anthropic.com/en/docs/build-with-claude/computer-use",
+    "https://docs.llamaindex.ai/en/stable/",
+]
+
+def build_super_brain():
+    api_key = os.getenv("FIRECRAWL_API_KEY")
+    if not api_key:
+        # Fall back to credentials file used by Firecrawl CLI
+        import json, pathlib
+        creds_path = pathlib.Path(os.environ.get("APPDATA", "")) / "firecrawl-cli" / "credentials.json"
+        if creds_path.exists():
+            with open(creds_path) as f:
+                api_key = json.load(f).get("apiKey", "")
+
+    if not api_key:
+        print("❌ No FIRECRAWL_API_KEY found. Add it to .env or run: firecrawl init")
+        return
+
+    app = FirecrawlApp(api_key=api_key)
+
+    print("🚀 Initializing RUBE Super Brain extraction via Firecrawl...")
+
+    with open(BRAIN_OUTPUT, "w", encoding="utf-8") as f:
+        f.write("# PROJECT RUBE: MASTER ARCHITECTURE KNOWLEDGE\n")
+        f.write("INSTRUCTIONS: The following context is divided into XML tags. Always read the relevant <source> tags before generating system code or proposing logic.\n\n")
+
+        for url in URLS:
+            print(f"🧠 Assimilating: {url}")
+            try:
+                result = app.scrape_url(
+                    url,
+                    formats=["markdown"],
+                    only_main_content=True,
+                )
+                content = result.get("markdown", "") if isinstance(result, dict) else getattr(result, "markdown", "")
+
+                if content:
                     f.write(f"<source url='{url}'>\n")
-                    f.write(result.markdown)
+                    f.write(content)
                     f.write("\n</source>\n\n")
+                    print(f"  ✅ {len(content):,} chars extracted")
                 else:
-                    print(f"❌ Failed to scrape: {url} - {result.error_message}")
+                    print(f"  ⚠️  No content returned for {url}")
 
-    print("✅ Super Brain compiled successfully into RUBE_SUPER_BRAIN.md")
+            except Exception as e:
+                print(f"  ❌ Failed: {url} — {e}")
+
+    print(f"\n✅ Super Brain compiled → {BRAIN_OUTPUT}")
+
 
 if __name__ == "__main__":
-    asyncio.run(build_super_brain())
+    build_super_brain()
