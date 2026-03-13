@@ -1,6 +1,6 @@
 """RUBE Self-Improvement System — Approval queue, subagent invocation, and edit handlers.
 
-All proposed code changes go through a pending queue. Trell must explicitly
+All proposed code changes go through a pending queue. The user must explicitly
 approve each edit before any file is written. The subagent (Claude Code CLI)
 runs in a subprocess so it never pollutes the main context window.
 """

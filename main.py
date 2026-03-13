@@ -89,7 +89,7 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     threading.Thread(target=initialize_vosk, daemon=True).start()
     threading.Thread(target=tts.preload_pipeline, daemon=True).start()
 
-    temp_memory.parameters["location"] = {"city": "New Orleans", "region": "Louisiana", "timezone": "America/Chicago"}
+    temp_memory.parameters["location"] = {"city": "Unknown", "region": "Unknown", "timezone": "UTC"}
     threading.Thread(target=fetch_geo_context_threaded, daemon=True).start()
 
     def check_n8n_health():
@@ -218,7 +218,7 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
 
         memory_for_prompt = {
             "user_name": user_name,
-            "current_location": f"{geo_ctx.get('city', 'New Orleans')}, {geo_ctx.get('region', 'Louisiana')}",
+            "current_location": f"{geo_ctx.get('city', 'Unknown')}, {geo_ctx.get('region', 'Unknown')}",
             "current_time_context": datetime.datetime.now().strftime("%A, %B %d, %Y - %I:%M %p"),
             "recent_conversation": recent_convo
         }
@@ -333,7 +333,7 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         if response and intent != "register_api_key":
              edge_speak(response, ui)
 
-        # Periodic reminder: nudge Trell about pending edits every 5 interactions
+        # Periodic reminder: nudge user about pending edits every 5 interactions
         temp_memory.increment_interaction()
         if temp_memory.get_interaction_count() % 5 == 0:
             reminder = get_reminder_message(temp_memory)
