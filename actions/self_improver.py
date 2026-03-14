@@ -12,13 +12,9 @@ import subprocess
 import time
 from datetime import datetime
 
-import requests
-from dotenv import load_dotenv
-
 from tts import edge_speak
 from actions import file_editor
 from memory.feedback_logger import generate_self_assessment
-from llm import load_brain
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -149,7 +145,10 @@ def reject_edit(session_memory, edit_id):
 # ---------------------------------------------------------------------------
 
 def invoke_subagent(file_path, reason):
-    """Spawn Claude Code CLI as a subprocess to analyze a file and propose a fix.
+    """Spawn Claude Code CLI (real Anthropic API) to analyze a file and propose a fix.
+
+    Claude Code reads CLAUDE.md and ai_docs/ automatically for full project context.
+    No need to inject RUBE_SUPER_BRAIN.md — the folder-as-architecture provides it.
     Returns {"proposed_fix": str, "reason": str} or None on any failure.
     """
     # Read the file first
@@ -158,67 +157,37 @@ def invoke_subagent(file_path, reason):
         print(f"⚠️ Subagent: could not read {file_path}: {content}")
         return None
 
-    # Load the AI framework knowledge base so the subagent reasons against proven patterns
-    brain = load_brain()
-    brain_section = (
-        f"\n\n[AI FRAMEWORK KNOWLEDGE BASE - Reference these proven patterns when proposing code changes]\n{brain}"
-        if brain else ""
-    )
-
     prompt = (
         f"You are analyzing a Python file from the RUBE AI assistant project.\n"
         f"File: {file_path}\n"
         f"Issue: {reason}\n\n"
-        f"Current file content:\n```\n{content}\n```\n"
-        f"{brain_section}\n\n"
+        f"Current file content:\n```\n{content}\n```\n\n"
         f"Propose a fix. Return ONLY a JSON object with exactly these keys:\n"
         f'{{"proposed_fix": "<the complete new file content>", "reason": "<one sentence explaining what changed>"}}\n'
         f"No markdown. No explanation outside the JSON."
     )
 
-    # Route through LM Studio so the subagent runs locally (free, offline)
-    load_dotenv()
-    lm_url = os.getenv("LM_STUDIO_URL", "http://localhost:1234")
-    lm_model = os.getenv("LM_STUDIO_MODEL", "qwen/qwen3.5-9b")
-    lm_token = os.getenv("LM_STUDIO_TOKEN", "lmstudio")
-
-    # Reachability check — fail fast if LM Studio is offline
-    try:
-        resp = requests.get(f"{lm_url}/v1/models", timeout=3)
-        if resp.status_code != 200:
-            print(f"⚠️ Subagent: LM Studio returned status {resp.status_code}")
-            return None
-    except Exception:
-        print("⚠️ Subagent: LM Studio is offline. Start it and load the model first.")
-        return None
-
-    env = {
-        **os.environ,
-        "ANTHROPIC_BASE_URL": lm_url,
-        "ANTHROPIC_AUTH_TOKEN": lm_token,
-        "ANTHROPIC_API_KEY": lm_token,
-    }
-
     start_time = time.time()
     try:
+        # Use real Anthropic API — no env overrides.
+        # Claude Code reads CLAUDE.md and ai_docs/ automatically for project context.
         proc = subprocess.Popen(
-            ["claude", "--model", lm_model, "--print", "--output-format", "json", "-p", prompt],
+            ["claude", "--print", "-p", prompt],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd=PROJECT_ROOT,
-            env=env,
         )
         try:
-            stdout, stderr = proc.communicate(timeout=300)
+            stdout, stderr = proc.communicate(timeout=120)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
             elapsed = int(time.time() - start_time)
-            print(f"⚠️ Subagent: Claude Code timed out after {elapsed} seconds.")
+            print(f"⚠️ Subagent: Claude Code timed out after {elapsed}s")
             return None
     except FileNotFoundError:
-        print("⚠️ Subagent: 'claude' CLI not found. Is Claude Code installed?")
+        print("⚠️ Subagent: 'claude' CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
         return None
     except Exception as e:
         print(f"⚠️ Subagent subprocess error: {e}")
@@ -231,22 +200,34 @@ def invoke_subagent(file_path, reason):
         print(f"⚠️ Subagent exited with code {proc.returncode}: {stderr[:300]}")
         return None
 
-    # Parse the output — Claude Code with --output-format json wraps in {"result": "..."}
-    try:
-        outer = json.loads(stdout)
-        # If there's a "result" key, the actual content is inside it
-        inner_text = outer.get("result", stdout) if isinstance(outer, dict) else stdout
-        if isinstance(inner_text, str):
-            parsed = json.loads(inner_text)
-        else:
-            parsed = inner_text
-    except (json.JSONDecodeError, TypeError):
-        # Try parsing stdout directly
+    # Parse JSON from Claude Code's output
+    raw = stdout.strip()
+
+    # Try to extract JSON from the response (may be wrapped in markdown code blocks)
+    json_text = raw
+    if "```json" in raw:
         try:
-            parsed = json.loads(stdout)
-        except (json.JSONDecodeError, TypeError):
-            print(f"⚠️ Subagent: could not parse output as JSON.")
-            return None
+            start = raw.index("```json") + 7
+            end = raw.index("```", start)
+            json_text = raw[start:end].strip()
+        except ValueError:
+            pass
+    elif "```" in raw:
+        try:
+            start = raw.index("```") + 3
+            end = raw.index("```", start)
+            json_text = raw[start:end].strip()
+        except ValueError:
+            pass
+
+    # Find the JSON object boundaries
+    try:
+        obj_start = json_text.index("{")
+        obj_end = json_text.rindex("}") + 1
+        parsed = json.loads(json_text[obj_start:obj_end])
+    except (ValueError, json.JSONDecodeError):
+        print(f"⚠️ Subagent: could not parse output as JSON.")
+        return None
 
     if not isinstance(parsed, dict):
         print("⚠️ Subagent: output is not a JSON object.")
