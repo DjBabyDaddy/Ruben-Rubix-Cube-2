@@ -103,3 +103,4 @@ AVAILABLE INTENTS:
 23. "reject_edit" - Reject and discard a specific queued edit. Parameters: {"edit_id": "<8-char hex ID>"}
 24. "request_file_edit" - Request an AI subagent to propose an edit to a specific file. Parameters: {"file_path": "<relative path to file>", "reason": "<what to fix or improve>"}
 25. "self_improve" - Trigger self-analysis of failure patterns and generate code fix proposals. Parameters: {}
+26. "code_task" - Use when the user asks to write code, debug, refactor, build a script, or tackle any complex programming or analytical task. Routes to the local LM Studio coding agent (Qwen 3.5 9B) running via Claude Code CLI — offline, free, and private. Parameters: {"task": "<full description of the coding task>", "context": "<optional: file path, code snippet, or extra context — leave blank if none>"}

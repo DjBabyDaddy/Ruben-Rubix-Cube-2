@@ -46,6 +46,7 @@ from actions.self_improver import (
     handle_review_pending, handle_approve, handle_reject,
     handle_request_file_edit, handle_self_improve, get_reminder_message
 )
+from actions.code_agent import handle_code_task
 
 from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
 from memory.feedback_logger import log_action_result, generate_self_assessment
@@ -329,6 +330,8 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
             threading.Thread(target=_run_and_log, args=(handle_request_file_edit, "request_file_edit", args), daemon=True).start()
         elif intent == "self_improve":
             threading.Thread(target=_run_and_log, args=(handle_self_improve, "self_improve", args), daemon=True).start()
+        elif intent == "code_task":
+            threading.Thread(target=_run_and_log, args=(handle_code_task, "code_task", args), daemon=True).start()
 
         if response and intent != "register_api_key":
              edge_speak(response, ui)
@@ -368,7 +371,8 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         await asyncio.sleep(0.01)
 
 def main():
-    ui = RubeUI(size=(380, 450)) 
+    ui = RubeUI(size=(380, 450))
+    ui.session_memory = temp_memory  # Link session state for developer dashboard
     try:
         from actions import face_recognizer
         face_recognizer.identity_lock_queue = asyncio.Queue() 

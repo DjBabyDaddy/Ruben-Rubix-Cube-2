@@ -4,6 +4,7 @@ import random
 import math
 import datetime
 import platform
+import json
 import tkinter as tk
 
 try:
@@ -71,6 +72,8 @@ class RubeUI:
         self.canvas.bind("<ButtonPress-1>", self.start_move)
         self.canvas.bind("<B1-Motion>", self.do_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.canvas.bind("<Double-1>", self._on_double_click)
+        self._double_clicked = False
 
         self.speaking = False
         self.processing = False
@@ -96,9 +99,11 @@ class RubeUI:
             tags="subtitle"
         )
         self.subtitle_timer = None
-        self.on_text_submit = None 
+        self.on_text_submit = None
+        self.session_memory = None  # Set by main.py for dashboard access
 
         self._init_terminal()
+        self._init_dev_dashboard()
         self._build_cube()
         self.root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0))
         self._animate()
@@ -168,8 +173,15 @@ class RubeUI:
         self.root.geometry(f"+{x}+{y}")
 
     def on_release(self, event):
+        if getattr(self, '_double_clicked', False):
+            self._double_clicked = False
+            return
         if not getattr(self, '_is_dragging', False):
             self.toggle_input(event)
+
+    def _on_double_click(self, event=None):
+        self._double_clicked = True
+        self.toggle_dev_dashboard()
 
     def trigger_hotkey(self):
         self.root.attributes('-topmost', True)
@@ -220,6 +232,196 @@ class RubeUI:
             self.terminal.geometry(f"+{x}+{y}")
             self.terminal.deiconify()
             self.entry.focus_set()
+
+    def _init_dev_dashboard(self):
+        self.dashboard = tk.Toplevel(self.root)
+        self.dashboard.title("RUBE Developer Dashboard")
+        self.dashboard.geometry("520x600")
+        self.dashboard.configure(bg="#000000")
+        self.dashboard.protocol("WM_DELETE_WINDOW", self.dashboard.withdraw)
+        self._dash_refresh_timer = None
+
+        # Header
+        dash_header = tk.Frame(self.dashboard, bg="#000000", height=40)
+        dash_header.pack(fill=tk.X, padx=15, pady=(12, 0))
+        tk.Label(dash_header, text="DEVELOPER DASHBOARD", font=("Menlo", 12, "bold"),
+                 fg="#ff00ff", bg="#000000").pack(side=tk.LEFT)
+        self._dash_time_label = tk.Label(dash_header, text="", font=("Menlo", 10, "bold"),
+                                          fg="#00ffff", bg="#000000")
+        self._dash_time_label.pack(side=tk.RIGHT)
+
+        # Scrollable content area
+        container = tk.Frame(self.dashboard, bg="#000000")
+        container.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        self._dash_canvas = tk.Canvas(container, bg="#000000", highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical", command=self._dash_canvas.yview)
+        self._dash_content = tk.Frame(self._dash_canvas, bg="#000000")
+
+        self._dash_content.bind("<Configure>",
+            lambda e: self._dash_canvas.configure(scrollregion=self._dash_canvas.bbox("all")))
+        self._dash_canvas.create_window((0, 0), window=self._dash_content, anchor="nw")
+        self._dash_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self._dash_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Mouse wheel scrolling bound only to dashboard
+        def _on_mousewheel(event):
+            self._dash_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._dash_canvas.bind("<MouseWheel>", _on_mousewheel)
+        self._dash_content.bind("<MouseWheel>", _on_mousewheel)
+
+        self.dashboard.withdraw()
+
+    def toggle_dev_dashboard(self):
+        if self.dashboard.state() == "normal":
+            self.dashboard.withdraw()
+            if self._dash_refresh_timer:
+                self.root.after_cancel(self._dash_refresh_timer)
+                self._dash_refresh_timer = None
+        else:
+            x = self.root.winfo_x() - 540
+            y = self.root.winfo_y()
+            self.dashboard.geometry(f"+{x}+{y}")
+            self.dashboard.deiconify()
+            self._refresh_dashboard()
+
+    def _refresh_dashboard(self):
+        # Update time
+        now = datetime.datetime.now()
+        self._dash_time_label.config(text=now.strftime("%d %b %Y | %I:%M:%S %p").upper())
+
+        # Clear content
+        for widget in self._dash_content.winfo_children():
+            widget.destroy()
+
+        # --- SYSTEM STATUS ---
+        self._dash_section("SYSTEM STATUS")
+        status_lines = []
+
+        # LM Studio check
+        try:
+            import requests
+            resp = requests.get("http://localhost:1234/v1/models", timeout=2)
+            lm_ok = resp.status_code == 200
+        except Exception:
+            lm_ok = False
+        status_lines.append(("LM Studio", lm_ok))
+
+        # Vosk check
+        try:
+            from speech_to_text import vosk_ready
+            vosk_ok = vosk_ready.is_set()
+        except Exception:
+            vosk_ok = False
+        status_lines.append(("Vosk STT", vosk_ok))
+
+        # n8n check
+        n8n_url = os.environ.get("N8N_WEBHOOK_URL", "")
+        n8n_ok = bool(n8n_url)
+        status_lines.append(("n8n Webhook", n8n_ok))
+
+        # API keys
+        api_keys = {
+            "ANTHROPIC": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "SERPAPI": bool(os.environ.get("SERPAPI_API_KEY")),
+            "EXA": bool(os.environ.get("EXA_API_KEY")),
+        }
+
+        for name, ok in status_lines:
+            dot = "\u25CF"
+            color = "#39ff14" if ok else "#ff4500"
+            label = f"  {dot} {name}: {'ONLINE' if ok else 'OFFLINE'}"
+            lbl = tk.Label(self._dash_content, text=label, font=("Menlo", 10),
+                           fg=color, bg="#000000", anchor="w")
+            lbl.pack(fill=tk.X, padx=10)
+
+        key_str = "  Keys: " + "  ".join(
+            f"{k} \u2713" if v else f"{k} \u2717" for k, v in api_keys.items()
+        )
+        tk.Label(self._dash_content, text=key_str, font=("Menlo", 9),
+                 fg="#888888", bg="#000000", anchor="w").pack(fill=tk.X, padx=10)
+
+        # --- ACTION LOG ---
+        self._dash_section("ACTION LOG (last 20)")
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "feedback_log.json")
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8") as f:
+                    full_log = json.load(f)
+                entries = full_log[-20:] if isinstance(full_log, list) else []
+            else:
+                entries = []
+        except Exception:
+            entries = []
+
+        if not entries:
+            tk.Label(self._dash_content, text="  No action logs yet.",
+                     font=("Menlo", 9), fg="#666666", bg="#000000", anchor="w").pack(fill=tk.X, padx=10)
+        else:
+            for e in reversed(entries):
+                ts = e.get("timestamp", "")[:19].replace("T", " ")
+                ts_short = ts[11:] if len(ts) >= 16 else ts
+                intent = e.get("intent", "?")[:20]
+                ok = e.get("success", True)
+                ms = e.get("exec_time_ms", 0)
+                err = e.get("error", "")
+                mark = "\u2713" if ok else "\u2717"
+                color = "#39ff14" if ok else "#ff4500"
+                time_str = f"{ms/1000:.1f}s" if ms else "\u2014"
+                line = f"  {ts_short}  {intent:<20} {mark} {time_str}"
+                lbl = tk.Label(self._dash_content, text=line, font=("Menlo", 9),
+                               fg=color, bg="#0d0d0d", anchor="w")
+                lbl.pack(fill=tk.X, padx=10, pady=1)
+                if err and not ok:
+                    tk.Label(self._dash_content, text=f"    \u2514 {err[:80]}",
+                             font=("Menlo", 8), fg="#ff4500", bg="#0d0d0d", anchor="w").pack(fill=tk.X, padx=10)
+
+        # --- SESSION STATE ---
+        self._dash_section("SESSION STATE")
+        sm = self.session_memory
+        if sm:
+            state_lines_data = [
+                f"  Interactions: {sm.get_interaction_count()}",
+                f"  Pending edits: {len(sm.get_pending_edits())}",
+                f"  Pending actions: {len(getattr(sm, '_pending_actions', []))}",
+                f"  Last input: \"{(sm.get_last_user_text() or '\u2014')[:60]}\"",
+                f"  Last response: \"{(sm.get_last_ai_response() or '\u2014')[:60]}\"",
+            ]
+        else:
+            state_lines_data = ["  (session memory not linked)"]
+
+        for line in state_lines_data:
+            tk.Label(self._dash_content, text=line, font=("Menlo", 9),
+                     fg="#b0b0b0", bg="#000000", anchor="w").pack(fill=tk.X, padx=10)
+
+        # --- SELF-ASSESSMENT ---
+        self._dash_section("SELF-ASSESSMENT")
+        try:
+            from memory.feedback_logger import generate_self_assessment
+            insights = generate_self_assessment()
+        except Exception:
+            insights = []
+
+        if not insights:
+            tk.Label(self._dash_content, text="  All systems nominal.",
+                     font=("Menlo", 9), fg="#39ff14", bg="#000000", anchor="w").pack(fill=tk.X, padx=10)
+        else:
+            for insight in insights:
+                tk.Label(self._dash_content, text=f"  \u26A0 {insight}",
+                         font=("Menlo", 9), fg="#ffff00", bg="#000000",
+                         anchor="w", wraplength=470, justify="left").pack(fill=tk.X, padx=10, pady=1)
+
+        # Schedule next refresh (every 3 seconds while visible)
+        if self.dashboard.state() == "normal":
+            self._dash_refresh_timer = self.root.after(3000, self._refresh_dashboard)
+
+    def _dash_section(self, title):
+        sep = tk.Frame(self._dash_content, bg="#1a1a1a", height=1)
+        sep.pack(fill=tk.X, padx=10, pady=(8, 2))
+        tk.Label(self._dash_content, text=f"\u25B8 {title}", font=("Menlo", 10, "bold"),
+                 fg="#ff00ff", bg="#000000", anchor="w").pack(fill=tk.X, padx=10, pady=(2, 4))
 
     def _update_time(self):
         now = datetime.datetime.now()
