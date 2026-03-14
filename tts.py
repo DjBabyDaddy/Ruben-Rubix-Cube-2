@@ -8,17 +8,18 @@ import speech_to_text
 
 OUTPUT_FILE = "output.wav"
 
-_kokoro_pipeline = None
-_pipeline_lock = threading.Lock()
+# TTS provider instance (lazy-loaded via core/tts_providers.py)
+_tts_provider = None
+_provider_lock = threading.Lock()
 
-def _get_pipeline():
-    global _kokoro_pipeline
-    if _kokoro_pipeline is None:
-        with _pipeline_lock:
-            if _kokoro_pipeline is None:
-                from kokoro import KPipeline
-                _kokoro_pipeline = KPipeline(lang_code='a')  # American English
-    return _kokoro_pipeline
+def _get_provider():
+    global _tts_provider
+    if _tts_provider is None:
+        with _provider_lock:
+            if _tts_provider is None:
+                from core.tts_providers import get_tts_provider
+                _tts_provider = get_tts_provider()
+    return _tts_provider
 
 is_speaking = False
 is_processing = False
@@ -132,21 +133,18 @@ def _process_output(output_data, ui):
             expecting_reply_until[0] = 0.0
             
 def _generate_tts(text):
-    import numpy as np
-    import soundfile as sf
-
-    pipeline = _get_pipeline()
-    chunks = []
-    for _, _, audio in pipeline(text, voice='am_michael', speed=1.0):
-        chunks.append(audio)
-    audio_np = np.concatenate(chunks) if chunks else np.zeros(24000, dtype=np.float32)
-    sf.write(OUTPUT_FILE, audio_np, 24000)
-    return len(audio_np) / 24000 * 1000  # duration in ms
+    """Generate TTS audio via the configured cloud provider (Cartesia/Edge)."""
+    provider = _get_provider()
+    _, duration_ms = provider.generate_tts(text)
+    return duration_ms
 
 def preload_pipeline():
-    """Preload Kokoro TTS pipeline in a background thread during boot."""
-    _get_pipeline()
-    print("TTS pipeline preloaded.")
+    """Initialize TTS provider connection (replaces Kokoro preload)."""
+    try:
+        _get_provider()
+        print("✅ TTS provider initialized.")
+    except Exception as e:
+        print(f"⚠️ TTS provider init failed: {e}")
 
 def stop_speaking():
     global is_speaking

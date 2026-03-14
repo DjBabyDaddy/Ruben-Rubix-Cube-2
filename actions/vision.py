@@ -1,12 +1,18 @@
 import time
 import base64
 import threading
-import cv2
 import glob
 import os
 from io import BytesIO
 from llm import get_llm_multimodal_output
 from tts import edge_speak
+
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError:
+    OPENCV_AVAILABLE = False
+    cv2 = None
 
 _TEXT_EXTENSIONS = ['txt', 'md', 'py', 'js', 'ts', 'json', 'csv', 'xml',
                     'yaml', 'yml', 'html', 'css', 'log', 'ini', 'cfg']
@@ -97,17 +103,29 @@ def _analyze_document(file_path, user_prompt, player):
                 content = f.read()
 
         elif ext == 'pdf':
-            import pdfplumber
+            try:
+                import pdfplumber
+            except ImportError:
+                edge_speak("Boss, I need the pdfplumber package to read PDFs. Install it with pip install pdfplumber.", player)
+                return
             with pdfplumber.open(file_path) as pdf:
                 content = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
         elif ext in ['docx', 'doc']:
-            from docx import Document as DocxDocument
+            try:
+                from docx import Document as DocxDocument
+            except ImportError:
+                edge_speak("Boss, I need the python-docx package to read Word docs. Install it with pip install python-docx.", player)
+                return
             doc = DocxDocument(file_path)
             content = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
         elif ext in ['xlsx', 'xls']:
-            import openpyxl
+            try:
+                import openpyxl
+            except ImportError:
+                edge_speak("Boss, I need the openpyxl package to read Excel files. Install it with pip install openpyxl.", player)
+                return
             wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             rows = []
             for sheet_name in list(wb.sheetnames)[:3]:
@@ -155,26 +173,29 @@ def _analyze_screen(user_prompt, player):
         edge_speak(msg, player)
 
 def _analyze_camera(user_prompt, player):
+    if not OPENCV_AVAILABLE:
+        edge_speak("Boss, camera analysis requires OpenCV. It's not installed on this system.", player)
+        return
     print("📷 Accessing webcam feed...")
-    time.sleep(1.2) 
+    time.sleep(1.2)
     try:
         cam = cv2.VideoCapture(0)
         if not cam.isOpened():
             msg = "Boss, I cannot activate the visual matrix. The webcam feed appears disconnected."
             edge_speak(msg, player)
             return
-            
+
         ret, frame = cam.read()
-        cam.release() 
-        
+        cam.release()
+
         if not ret:
             msg = "Boss, I captured a corrupt visual frame."
             edge_speak(msg, player)
             return
-            
+
         _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
         image_base64 = base64.b64encode(buffer).decode('utf-8')
-        
+
         visual_summary = get_llm_multimodal_output([image_base64], user_prompt)
         edge_speak(visual_summary, player)
     except Exception as e:
@@ -192,6 +213,9 @@ def _get_frame_count(total_frames, fps):
 
 
 def _analyze_video(user_prompt, player, specific_path=None):
+    if not OPENCV_AVAILABLE:
+        edge_speak("Boss, video analysis requires OpenCV. It's not installed on this system.", player)
+        return
     print("🎞️ Ripping video frames for storyboard analysis...")
     video_path = specific_path if specific_path else get_latest_video()
 

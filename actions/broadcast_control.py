@@ -3,12 +3,25 @@ import time
 import platform
 import logging
 import difflib
-import psutil
-import pyautogui
-import obsws_python as obs
 from tts import edge_speak
 
-logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
+
+try:
+    import obsws_python as obs
+    OBS_AVAILABLE = True
+    logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
+except ImportError:
+    OBS_AVAILABLE = False
+    obs = None
 
 STREAMLABS_HOTKEYS = {
     "live": "1", "brb": "2", "be right back": "2", "right back": "2",
@@ -21,7 +34,8 @@ STREAMLABS_ACTIONS = {
 
 def get_running_broadcasters():
     running = []
-    # THE FIX: Cross-platform psutil process checking
+    if psutil is None:
+        return running
     try:
         processes = [p.info['name'].lower() for p in psutil.process_iter(['name']) if p.info['name']]
         if any("streamlabs" in p for p in processes): running.append("streamlabs")
@@ -31,6 +45,8 @@ def get_running_broadcasters():
     return running
 
 def get_obs_client():
+    if not OBS_AVAILABLE:
+        return None
     hosts_to_try = ['127.0.0.1', 'localhost']
     for host in hosts_to_try:
         try:

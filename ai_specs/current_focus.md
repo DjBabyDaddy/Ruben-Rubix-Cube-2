@@ -1,23 +1,26 @@
-# Current Focus — Updated 2026-03-13
+# Current Focus — Updated 2026-03-14
 
 ## Active Work
-- **Local coding agent integration** — Claude Code CLI + LM Studio (Qwen 3.5 9B) for offline code tasks
-- **Developer dashboard** — double-click cube to see real-time system status, action log, session state
-- **Folder-as-architecture** — implementing ai_docs/, ai_specs/, ai_toolkit/ structure
+- **Mass production migration** — executing PRD v2.0 (`ai_specs/mass_production_prd.md`)
+- Phase 0: Foundation (structured outputs, requirements fix, undocumented intents)
+- Phase 1: Cartesia Sonic 3 TTS (replaces Kokoro)
+- Phase 2: Deepgram Nova-3 STT (replaces Vosk)
+- Phase 3: Groq speed brain with 70B→8B auto-fallback (replaces LM Studio)
 
 ## Recently Completed
+- PRD v2.0 audited and corrected via 6-agent research sweep
+- Key decisions: Cartesia for voice, Groq for brain, Claude Agent SDK for self-improvement
 - Added `code_task` intent (intent #26) with full routing
-- Fixed `self_improver.py` to use LM Studio instead of Anthropic API for subagent calls
-- Added progress ticker to code_agent.py (shows elapsed time in terminal)
-- Created developer dashboard in ui.py (system status, action log, session state, self-assessment)
-- Increased subprocess timeouts from 120s to 300s
+- Developer dashboard in ui.py (system status, action log, session state, self-assessment)
+- Folder-as-architecture: ai_docs/, ai_specs/, ai_toolkit/ structure
 
 ## Known Issues
-- Code agent may still time out on complex tasks with Qwen 3.5 9B (300s limit)
-- `manage_files` intent referenced in feedback log but no matching action module exists
-- `chat` intent sometimes slow (>10s) on first call after boot
+- Intent count mismatch: 28 intents routed but only 26 documented in prompt.txt
+- requirements.txt missing critical packages (anthropic, numpy, groq, firecrawl)
+- requirements.txt formatting bug (Pillow/pygetwindow on same line)
+- `send_message`, `play_media`, `show_suggestions` routed in main.py but undocumented
 
 ## Next Up
-- Test the full code_task pipeline end-to-end with LM Studio
-- Validate developer dashboard data accuracy
-- Consider streaming output from local model instead of waiting for full response
+- Execute Phase 0 (foundation fixes)
+- Begin Phase 1 (Cartesia TTS integration)
+- Design remote update server architecture (separate PRD)

@@ -1,48 +1,23 @@
 """RUBE Code Agent — Two-tier system for coding tasks.
 
-Tier 1 (Heavy): Claude Code CLI → Anthropic API
+Tier 1 (Heavy): Anthropic API (Claude Sonnet 4.6)
     For project-level work, self-improvement, multi-file edits.
-    Claude Code reads CLAUDE.md and ai_docs/ automatically for full project context.
 
-Tier 2 (Quick): Direct HTTP → LM Studio (Qwen 3.5 9B at localhost:1234)
+Tier 2 (Quick): Groq API (Llama 3.3 70B → 8B fallback)
     For simple code questions, write-a-function, explain-this-code.
-    Free, offline, fast. Streams tokens to the terminal in real-time.
+    Free tier, lightning fast. Streams tokens to the terminal in real-time.
 
-Falls back to Tier 1 if LM Studio is offline.
+Falls back to Tier 1 if Groq is unavailable.
 """
 import os
-import json
-import subprocess
 import threading
 import time
 
-import requests
 from dotenv import load_dotenv
 
 from tts import edge_speak
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-
-# Timeout for Claude Code CLI (Tier 1)
-CLAUDE_CODE_TIMEOUT = 120
-# Timeout for LM Studio HTTP (Tier 2) — (connect_timeout, read_timeout)
-LM_STUDIO_TIMEOUT = (10, 300)
-
-# Keywords that indicate the task needs full project context (Tier 1)
-HEAVY_KEYWORDS = [
-    "edit", "fix", "improve", "refactor", "rube", "project", "module",
-    "file", "debug", "update", "self-improve", "review", "analyze",
-    "actions/", "core/", "memory/", ".py",
-]
-
-
-def _lm_studio_online(base_url: str, timeout: int = 3) -> bool:
-    """Return True if LM Studio's server is reachable."""
-    try:
-        resp = requests.get(f"{base_url}/v1/models", timeout=timeout)
-        return resp.status_code == 200
-    except Exception:
-        return False
 
 
 def _progress_ticker(player, stop_event, start_time, label="Code Agent"):
@@ -66,15 +41,19 @@ def _progress_ticker(player, stop_event, start_time, label="Code Agent"):
 
 
 # ---------------------------------------------------------------------------
-# Tier 1: Claude Code CLI → Anthropic API
+# Tier 1: Anthropic API (Claude Sonnet) — Heavy tasks
 # ---------------------------------------------------------------------------
 
-def _invoke_claude_code(task, context, player):
-    """Tier 1: Full Claude Code CLI with real Anthropic API.
+def _invoke_anthropic(task, context, player):
+    """Tier 1: Direct Anthropic API call with Claude Sonnet for complex tasks."""
+    import anthropic
 
-    Claude Code reads CLAUDE.md and ai_docs/ automatically, giving it full
-    project understanding. Uses ANTHROPIC_API_KEY from .env — no overrides.
-    """
+    load_dotenv()
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        player.write_log("RUBE [Anthropic]: No API key configured")
+        return None
+
     prompt_parts = [f"Task: {task}"]
     if context and context.strip():
         prompt_parts.append(f"Context:\n{context.strip()}")
@@ -84,142 +63,86 @@ def _invoke_claude_code(task, context, player):
     )
     full_prompt = "\n\n".join(prompt_parts)
 
-    # Start progress ticker
     stop_ticker = threading.Event()
     start_time = time.time()
     ticker = threading.Thread(
         target=_progress_ticker,
-        args=(player, stop_ticker, start_time, "Claude Code"),
+        args=(player, stop_ticker, start_time, "Claude Sonnet"),
         daemon=True,
     )
     ticker.start()
 
     try:
-        proc = subprocess.Popen(
-            ["claude", "--print", "-p", full_prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=PROJECT_ROOT,
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            temperature=0.2,
+            messages=[{"role": "user", "content": full_prompt}],
         )
-
-        try:
-            stdout, stderr = proc.communicate(timeout=CLAUDE_CODE_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            elapsed = int(time.time() - start_time)
-            player.write_log(f"RUBE [Claude Code]: Timed out after {elapsed}s")
-            print(f"⚠️ Claude Code timed out after {elapsed}s")
-            return None
-
-    except FileNotFoundError:
-        print("⚠️ Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
-        player.write_log("RUBE [Claude Code]: CLI not found — install claude-code first")
-        return None
+        return response.content[0].text.strip() or None
     except Exception as e:
-        print(f"⚠️ Claude Code error: {e}")
+        print(f"⚠️ Anthropic API error: {e}")
+        player.write_log(f"RUBE [Claude Sonnet]: Error — {str(e)[:200]}")
         return None
     finally:
         stop_ticker.set()
         elapsed = int(time.time() - start_time)
-        player.write_log(f"RUBE [Claude Code]: Finished in {elapsed}s")
-
-    if proc.returncode != 0:
-        print(f"⚠️ Claude Code exited with code {proc.returncode}: {stderr[:300]}")
-        player.write_log(f"RUBE [Claude Code]: Error — {stderr[:200]}")
-        return None
-
-    return stdout.strip() or None
+        player.write_log(f"RUBE [Claude Sonnet]: Finished in {elapsed}s")
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: Direct HTTP → LM Studio (OpenAI-compatible)
+# Tier 2: Groq API (Llama 70B → 8B) — Quick tasks
 # ---------------------------------------------------------------------------
 
-def _invoke_local_lm(task, context, lm_url, lm_model, lm_token, player):
-    """Tier 2: Direct HTTP to LM Studio's OpenAI-compatible endpoint.
+def _invoke_groq_stream(task, context, player):
+    """Tier 2: Groq API with streaming. Free, fast, auto-fallback."""
+    from core.groq_brain import groq_completion_stream, get_current_model
 
-    Streams tokens to the terminal in real-time. Free, offline, fast.
-    """
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a concise coding assistant. Provide clear, complete answers. "
-                "If writing code, include the full implementation with brief inline comments."
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"Task: {task}" + (f"\n\nContext:\n{context}" if context else ""),
-        },
-    ]
+    system_prompt = (
+        "You are a concise coding assistant. Provide clear, complete answers. "
+        "If writing code, include the full implementation with brief inline comments."
+    )
+    user_prompt = f"Task: {task}" + (f"\n\nContext:\n{context}" if context else "")
 
-    player.write_log("RUBE [LM Studio]: Streaming response...")
+    model_name = get_current_model().split("/")[-1]
+    player.write_log(f"RUBE [Groq {model_name}]: Streaming response...")
     start_time = time.time()
 
-    try:
-        resp = requests.post(
-            f"{lm_url}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {lm_token}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": lm_model,
-                "messages": messages,
-                "max_tokens": 2048,
-                "temperature": 0.3,
-                "stream": True,
-            },
-            stream=True,
-            timeout=LM_STUDIO_TIMEOUT,
-        )
-        resp.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        player.write_log("RUBE [LM Studio]: Connection refused — is the server running?")
-        return None
-    except requests.exceptions.Timeout:
-        player.write_log("RUBE [LM Studio]: Connection timed out")
-        return None
-    except Exception as e:
-        player.write_log(f"RUBE [LM Studio]: HTTP error — {e}")
-        return None
-
-    # Stream tokens and display in real-time
     full_text = ""
     buffer = ""
     chunk_count = 0
 
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line or not line.startswith("data: "):
-            continue
-        payload = line[6:]  # strip "data: "
-        if payload == "[DONE]":
-            break
-        try:
-            chunk = json.loads(payload)
-            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-            if delta:
-                full_text += delta
-                buffer += delta
-                chunk_count += 1
-                # Flush to terminal every ~100 chars or every 10 chunks
-                if len(buffer) >= 100 or chunk_count % 10 == 0:
-                    player.write_log(f"  {buffer}")
-                    buffer = ""
-        except (json.JSONDecodeError, IndexError, KeyError):
-            continue
+    try:
+        for delta in groq_completion_stream(user_prompt, system_prompt=system_prompt):
+            full_text += delta
+            buffer += delta
+            chunk_count += 1
+            if len(buffer) >= 100 or chunk_count % 10 == 0:
+                player.write_log(f"  {buffer}")
+                buffer = ""
+    except Exception as e:
+        player.write_log(f"RUBE [Groq]: Error — {e}")
+        return None
 
-    # Flush remaining buffer
     if buffer:
         player.write_log(f"  {buffer}")
 
     elapsed = int(time.time() - start_time)
-    player.write_log(f"RUBE [LM Studio]: Done in {elapsed}s ({len(full_text)} chars)")
+    player.write_log(f"RUBE [Groq]: Done in {elapsed}s ({len(full_text)} chars)")
 
     return full_text.strip() or None
+
+
+# ---------------------------------------------------------------------------
+# Keywords that indicate heavy task → Tier 1
+# ---------------------------------------------------------------------------
+
+HEAVY_KEYWORDS = [
+    "edit", "fix", "improve", "refactor", "rube", "project", "module",
+    "file", "debug", "update", "self-improve", "review", "analyze",
+    "actions/", "core/", "memory/", ".py",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +151,6 @@ def _invoke_local_lm(task, context, lm_url, lm_model, lm_token, player):
 
 def handle_code_task(parameters, response, player, session_memory):
     """Handle the 'code_task' intent — route to Tier 1 or Tier 2 based on task complexity."""
-    load_dotenv()
-    lm_url = os.getenv("LM_STUDIO_URL", "http://localhost:1234")
-    lm_model = os.getenv("LM_STUDIO_MODEL", "qwen/qwen3.5-9b")
-    lm_token = os.getenv("LM_STUDIO_TOKEN", "lmstudio")
-
     task = str(parameters.get("task", "")).strip()
     context = str(parameters.get("context", "")).strip()
 
@@ -240,29 +158,23 @@ def handle_code_task(parameters, response, player, session_memory):
         edge_speak("Boss, I need a description of the coding task.", player)
         return
 
-    # Decide tier based on task content
     task_lower = task.lower()
     use_claude = any(kw in task_lower for kw in HEAVY_KEYWORDS)
 
     if use_claude:
-        # Tier 1: Claude Code with full project context
-        edge_speak("Routing that to Claude Code for full project analysis. Stand by, boss.", player)
-        player.write_log(f"RUBE [Code Agent]: Tier 1 (Claude Code) — {task}")
-        result_text = _invoke_claude_code(task, context, player)
+        edge_speak("Routing that to Claude Sonnet for deep analysis. Stand by, boss.", player)
+        player.write_log(f"RUBE [Code Agent]: Tier 1 (Claude Sonnet) — {task}")
+        result_text = _invoke_anthropic(task, context, player)
     else:
-        # Tier 2: LM Studio for quick code help
-        lm_online = _lm_studio_online(lm_url)
-        if lm_online:
-            edge_speak("Sending that to the local coding model. Stand by.", player)
-            player.write_log(f"RUBE [Code Agent]: Tier 2 (LM Studio) — {task}")
-            result_text = _invoke_local_lm(task, context, lm_url, lm_model, lm_token, player)
-        else:
-            # Fallback to Tier 1 if LM Studio is down
-            edge_speak(
-                "Local model is offline. Routing to Claude Code instead.", player
-            )
-            player.write_log(f"RUBE [Code Agent]: Tier 2 offline, falling back to Tier 1 — {task}")
-            result_text = _invoke_claude_code(task, context, player)
+        edge_speak("Sending that to the Groq speed brain. Stand by.", player)
+        player.write_log(f"RUBE [Code Agent]: Tier 2 (Groq) — {task}")
+        result_text = _invoke_groq_stream(task, context, player)
+
+        if not result_text:
+            # Fallback to Tier 1 if Groq fails
+            edge_speak("Groq is unavailable. Routing to Claude Sonnet instead.", player)
+            player.write_log(f"RUBE [Code Agent]: Groq failed, falling back to Tier 1 — {task}")
+            result_text = _invoke_anthropic(task, context, player)
 
     if not result_text:
         edge_speak(
@@ -271,10 +183,8 @@ def handle_code_task(parameters, response, player, session_memory):
         )
         return
 
-    # Log the full result to the UI panel
     player.write_log(f"RUBE [Code Agent Result]:\n{result_text}")
 
-    # Speak a short summary — trim so TTS doesn't read a wall of code
     summary = result_text.strip()
     if len(summary) > 300:
         summary = summary[:300].rstrip() + "... Check the log panel for the full output."

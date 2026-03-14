@@ -33,6 +33,22 @@ def load_brain() -> str:
 
 SYSTEM_PROMPT = load_system_prompt()
 
+# Structured output schema — guarantees valid JSON from Claude API
+INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string"},
+        "parameters": {"type": "object"},
+        "text": {"type": "string"},
+        "confidence": {"type": "number"},
+        "memory_update": {"type": "object"},
+    },
+    "required": ["intent", "text"],
+}
+
+# Check if SDK supports structured outputs (anthropic >= 0.84.0)
+_STRUCTURED_OUTPUTS_AVAILABLE = hasattr(anthropic.types, "JSONSchemaOutputConfig") if hasattr(anthropic, "types") else False
+
 def safe_json_parse(text: str) -> dict | None:
     if not text: return None
     text = text.strip()
@@ -85,18 +101,29 @@ def get_llm_output(user_text: str, memory_block: dict = None, use_brain: bool = 
             dynamic_system_prompt += f"\n\n[AI FRAMEWORK KNOWLEDGE BASE - Reference these proven patterns when proposing code changes]\n{brain}"
 
     try:
-        # THE FIX: Using the brand new claude-sonnet-4-6 model since the 3.5 series was deprecated
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            system=dynamic_system_prompt,
-            messages=[{"role": "user", "content": user_text}],
-            temperature=0.2,
-            max_tokens=1024
-        )
-        
+        api_kwargs = {
+            "model": "claude-sonnet-4-6",
+            "system": dynamic_system_prompt,
+            "messages": [{"role": "user", "content": user_text}],
+            "temperature": 0.2,
+            "max_tokens": 1024,
+        }
+
+        # Use structured outputs if SDK supports it — guarantees valid JSON
+        if _STRUCTURED_OUTPUTS_AVAILABLE:
+            try:
+                api_kwargs["output_config"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "rube_intent", "schema": INTENT_SCHEMA},
+                }
+            except Exception:
+                pass  # Fall through to standard parsing
+
+        response = client.messages.create(**api_kwargs)
+
         output_text = response.content[0].text.strip()
         parsed = safe_json_parse(output_text)
-        
+
         if parsed and "intent" in parsed:
             return {
                 "intent": parsed.get("intent", "chat"),

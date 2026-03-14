@@ -1,14 +1,13 @@
 """RUBE Self-Improvement System — Approval queue, subagent invocation, and edit handlers.
 
 All proposed code changes go through a pending queue. The user must explicitly
-approve each edit before any file is written. The subagent (Claude Code CLI)
-runs in a subprocess so it never pollutes the main context window.
+approve each edit before any file is written. The subagent uses the Anthropic API
+directly — no CLI dependency required.
 """
 import os
 import re
 import json
 import uuid
-import subprocess
 import time
 from datetime import datetime
 
@@ -145,23 +144,28 @@ def reject_edit(session_memory, edit_id):
 # ---------------------------------------------------------------------------
 
 def invoke_subagent(file_path, reason):
-    """Spawn Claude Code CLI (real Anthropic API) to analyze a file and propose a fix.
+    """Use Anthropic API directly to analyze a file and propose a fix.
 
-    Claude Code reads CLAUDE.md and ai_docs/ automatically for full project context.
-    No need to inject RUBE_SUPER_BRAIN.md — the folder-as-architecture provides it.
+    No CLI dependency — calls Claude Sonnet via the Python SDK.
     Returns {"proposed_fix": str, "reason": str} or None on any failure.
     """
-    # Read the file first
+    import anthropic
+    from llm import load_brain, safe_json_parse
+
     ok, content = file_editor.read_file(file_path)
     if not ok:
         print(f"⚠️ Subagent: could not read {file_path}: {content}")
         return None
 
+    brain = load_brain()
+    brain_section = f"\n\n[AI FRAMEWORK KNOWLEDGE BASE]\n{brain}" if brain else ""
+
     prompt = (
         f"You are analyzing a Python file from the RUBE AI assistant project.\n"
         f"File: {file_path}\n"
         f"Issue: {reason}\n\n"
-        f"Current file content:\n```\n{content}\n```\n\n"
+        f"Current file content:\n```\n{content}\n```\n"
+        f"{brain_section}\n\n"
         f"Propose a fix. Return ONLY a JSON object with exactly these keys:\n"
         f'{{"proposed_fix": "<the complete new file content>", "reason": "<one sentence explaining what changed>"}}\n'
         f"No markdown. No explanation outside the JSON."
@@ -169,68 +173,30 @@ def invoke_subagent(file_path, reason):
 
     start_time = time.time()
     try:
-        # Use real Anthropic API — no env overrides.
-        # Claude Code reads CLAUDE.md and ai_docs/ automatically for project context.
-        proc = subprocess.Popen(
-            ["claude", "--print", "-p", prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=PROJECT_ROOT,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=120)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            elapsed = int(time.time() - start_time)
-            print(f"⚠️ Subagent: Claude Code timed out after {elapsed}s")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("⚠️ Subagent: ANTHROPIC_API_KEY not set.")
             return None
-    except FileNotFoundError:
-        print("⚠️ Subagent: 'claude' CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
-        return None
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            temperature=0.2,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        output_text = response.content[0].text.strip()
     except Exception as e:
-        print(f"⚠️ Subagent subprocess error: {e}")
+        print(f"⚠️ Subagent API error: {e}")
         return None
     finally:
         elapsed = int(time.time() - start_time)
         print(f"🔧 Subagent finished in {elapsed}s")
 
-    if proc.returncode != 0:
-        print(f"⚠️ Subagent exited with code {proc.returncode}: {stderr[:300]}")
-        return None
-
-    # Parse JSON from Claude Code's output
-    raw = stdout.strip()
-
-    # Try to extract JSON from the response (may be wrapped in markdown code blocks)
-    json_text = raw
-    if "```json" in raw:
-        try:
-            start = raw.index("```json") + 7
-            end = raw.index("```", start)
-            json_text = raw[start:end].strip()
-        except ValueError:
-            pass
-    elif "```" in raw:
-        try:
-            start = raw.index("```") + 3
-            end = raw.index("```", start)
-            json_text = raw[start:end].strip()
-        except ValueError:
-            pass
-
-    # Find the JSON object boundaries
-    try:
-        obj_start = json_text.index("{")
-        obj_end = json_text.rindex("}") + 1
-        parsed = json.loads(json_text[obj_start:obj_end])
-    except (ValueError, json.JSONDecodeError):
-        print(f"⚠️ Subagent: could not parse output as JSON.")
-        return None
-
-    if not isinstance(parsed, dict):
-        print("⚠️ Subagent: output is not a JSON object.")
+    # Parse JSON from the response
+    parsed = safe_json_parse(output_text)
+    if not parsed or not isinstance(parsed, dict):
+        print("⚠️ Subagent: could not parse output as JSON.")
         return None
 
     proposed = parsed.get("proposed_fix")

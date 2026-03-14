@@ -10,43 +10,63 @@ import json
 import requests
 from dotenv import load_dotenv
 
-# THE FIX: Keeping the Email and Analytics Managers properly imported
+load_dotenv()
+
+# --- Feature flags (read from .env, default to enabled for backward compat) ---
+FEATURE_DESKTOP = os.getenv("FEATURE_DESKTOP_AUTOMATION", "true").lower() == "true"
+FEATURE_BROADCAST = os.getenv("FEATURE_BROADCAST_CONTROL", "true").lower() == "true"
+FEATURE_FACIAL = os.getenv("FEATURE_FACIAL_RECOGNITION", "true").lower() == "true"
+FEATURE_SOCIAL = os.getenv("FEATURE_SOCIAL_MEDIA", "true").lower() == "true"
+
+# --- Core imports (always available) ---
 from actions.analytics_manager import generate_analytics_report
 from actions.email_manager import send_email_message
 
-load_dotenv()
-
-from speech_to_text import record_voice, stop_listening_flag, initialize_vosk, vosk_ready
+from speech_to_text import record_voice, stop_listening_flag, initialize_stt, stt_ready
 from llm import get_llm_output
-import tts 
+import tts
 from tts import edge_speak, stop_speaking, stop_event
 
 from ui import RubeUI
 
 original_write_log = RubeUI.write_log
 def safe_write_log(self, message):
-    if "RUBE:" in message and tts.stop_event.is_set(): return 
+    if "RUBE:" in message and tts.stop_event.is_set(): return
     original_write_log(self, message)
 RubeUI.write_log = safe_write_log
 
 from actions.open_app import web_navigate, system_launch, system_close, play_media, system_control, play_soundcloud
-from actions.broadcast_control import broadcast_control
-import actions.web_search as web_search_module 
+import actions.web_search as web_search_module
 from actions.web_search import web_search
 from actions.weather_report import weather_action
-from actions.send_message import send_message  
-from actions.system_status import system_diagnostics, hardware_control 
+from actions.send_message import send_message
+from actions.system_status import system_diagnostics, hardware_control
 from actions.keyboard_matrix import execute_shortcut
 from actions.vision import analyze_multimodal_view
-from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
 from actions.whatsapp import send_whatsapp_message, initialize_whatsapp_matrix
-from actions.social_manager import generate_social_post
 from actions.contact_manager import import_contacts, save_contact
 from actions.self_improver import (
     handle_review_pending, handle_approve, handle_reject,
     handle_request_file_edit, handle_self_improve, get_reminder_message
 )
 from actions.code_agent import handle_code_task
+
+# --- Conditional imports based on feature flags ---
+if FEATURE_BROADCAST:
+    from actions.broadcast_control import broadcast_control
+else:
+    broadcast_control = None
+
+if FEATURE_FACIAL:
+    from actions.face_recognizer import identity_scan_room, initialize_facial_matrix
+else:
+    identity_scan_room = None
+    initialize_facial_matrix = None
+
+if FEATURE_SOCIAL:
+    from actions.social_manager import generate_social_post
+else:
+    generate_social_post = None
 
 from memory.memory_manager import load_memory, update_memory, get_startup_suggestions
 from memory.feedback_logger import log_action_result, generate_self_assessment
@@ -83,25 +103,57 @@ def fetch_geo_context_threaded():
 async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
     tts.start_gatekeeper_thread(ui)
 
+    # --- First-run wizard detection ---
+    if not os.path.exists(".env"):
+        print("📦 No .env found — launching first-time setup wizard...")
+        try:
+            from setup_wizard import run_wizard
+            run_wizard()
+            load_dotenv(override=True)
+        except Exception as e:
+            print(f"⚠️ Setup wizard failed: {e}")
+
     # Start boot animation while heavy systems load in background
     ui.start_booting()
 
     # Kick off all heavy initialization concurrently
-    threading.Thread(target=initialize_vosk, daemon=True).start()
+    threading.Thread(target=initialize_stt, daemon=True).start()
     threading.Thread(target=tts.preload_pipeline, daemon=True).start()
 
     temp_memory.parameters["location"] = {"city": "Unknown", "region": "Unknown", "timezone": "UTC"}
     threading.Thread(target=fetch_geo_context_threaded, daemon=True).start()
 
-    def check_n8n_health():
-        webhook_url = os.getenv("N8N_WEBHOOK_URL")
-        if not webhook_url: return
+    # OTA update check (non-blocking)
+    def _check_updates():
         try:
-            requests.head(webhook_url, timeout=5)
-            print("n8n pipeline is reachable.")
+            from core.updater import check_for_updates
+            update_info = check_for_updates()
+            if update_info:
+                print(f"📦 Update available: {update_info.get('version', 'unknown')}")
+                ui.write_log(f"RUBE: A system update is available (v{update_info.get('version', '?')}). Say 'update RUBE' to install.")
+        except Exception as e:
+            print(f"ℹ️ Update check skipped: {e}")
+    threading.Thread(target=_check_updates, daemon=True).start()
+
+    # Groq tier reset check (upgrade 8B back to 70B if rate limit window passed)
+    def _check_groq_tier():
+        try:
+            from core.groq_brain import check_groq_tier_reset
+            check_groq_tier_reset()
         except Exception:
-            print("n8n pipeline is OFFLINE — social posts will fail.")
-    threading.Thread(target=check_n8n_health, daemon=True).start()
+            pass
+    threading.Thread(target=_check_groq_tier, daemon=True).start()
+
+    if FEATURE_SOCIAL:
+        def check_n8n_health():
+            webhook_url = os.getenv("N8N_WEBHOOK_URL")
+            if not webhook_url: return
+            try:
+                requests.head(webhook_url, timeout=5)
+                print("n8n pipeline is reachable.")
+            except Exception:
+                print("n8n pipeline is OFFLINE — social posts will fail.")
+        threading.Thread(target=check_n8n_health, daemon=True).start()
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     if not anthropic_key:
@@ -118,13 +170,14 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
                 with open(".env", "a") as f: f.write(f"\nANTHROPIC_API_KEY={text.strip()}\n")
                 break
 
-    # Wait for Vosk to finish loading before greeting
-    await asyncio.to_thread(vosk_ready.wait)
+    # Wait for STT to finish loading before greeting
+    await asyncio.to_thread(stt_ready.wait)
 
     ui.stop_booting()
 
     memory = load_memory()
-    user_name = memory.get("identity", {}).get("name", {}).get("value", "boss")
+    user_name = memory.get("identity", {}).get("name", {}).get("value",
+                    os.getenv("RUBE_USER_NAME", "boss"))
 
     # Self-assessment: analyze past execution data for actionable insights
     local_insights = generate_self_assessment()
@@ -138,14 +191,23 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
 
     edge_speak(greeting, ui)
 
+    # Log active features
+    features = []
+    if FEATURE_DESKTOP: features.append("desktop-auto")
+    if FEATURE_BROADCAST: features.append("broadcast")
+    if FEATURE_FACIAL: features.append("facial-rec")
+    if FEATURE_SOCIAL: features.append("social")
+    print(f"🔧 Active features: {', '.join(features) if features else 'core only'}")
+
     suggestions = get_startup_suggestions() + local_insights
     if suggestions:
         hint = f"Boss, I have {len(suggestions)} performance suggestion{'s' if len(suggestions) > 1 else ''} from my self-analysis. Say 'show suggestions' to hear them."
         ui.write_log(f"RUBE: {hint}")
 
-    try:
-        threading.Thread(target=initialize_facial_matrix, daemon=True).start()
-    except Exception: pass
+    if FEATURE_FACIAL and initialize_facial_matrix:
+        try:
+            threading.Thread(target=initialize_facial_matrix, daemon=True).start()
+        except Exception: pass
 
     while True:
         stop_listening_flag.clear()
@@ -287,10 +349,18 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
                 except: pass
                 web_search_module.AWAITING_KEY_NAME = key_name
         elif intent == "vision_analysis": threading.Thread(target=_run_and_log, args=(analyze_multimodal_view, "vision_analysis", args), daemon=True).start()
-        elif intent == "facial_recognition": threading.Thread(target=_run_and_log, args=(identity_scan_room, "facial_recognition", args), daemon=True).start()
+        elif intent == "facial_recognition":
+            if not FEATURE_FACIAL or not identity_scan_room:
+                edge_speak("Boss, facial recognition is disabled in this configuration.", ui)
+                continue
+            threading.Thread(target=_run_and_log, args=(identity_scan_room, "facial_recognition", args), daemon=True).start()
         elif intent == "whatsapp_message": threading.Thread(target=_run_and_log, args=(send_whatsapp_message, "whatsapp_message", args), daemon=True).start()
         elif intent == "system_control": threading.Thread(target=_run_and_log, args=(system_control, "system_control", args), daemon=True).start()
-        elif intent == "broadcast_control": threading.Thread(target=_run_and_log, args=(broadcast_control, "broadcast_control", args), daemon=True).start()
+        elif intent == "broadcast_control":
+            if not FEATURE_BROADCAST or not broadcast_control:
+                edge_speak("Boss, broadcast control is disabled in this configuration.", ui)
+                continue
+            threading.Thread(target=_run_and_log, args=(broadcast_control, "broadcast_control", args), daemon=True).start()
         elif intent == "web_navigate": threading.Thread(target=_run_and_log, args=(web_navigate, "web_navigate", args), daemon=True).start()
         elif intent == "play_soundcloud": threading.Thread(target=_run_and_log, args=(play_soundcloud, "play_soundcloud", args), daemon=True).start()
         elif intent == "system_launch": threading.Thread(target=_run_and_log, args=(system_launch, "system_launch", args), daemon=True).start()
@@ -302,7 +372,11 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
         elif intent == "search":
             search_args = {**args, "api_key": serpapi_key, "geo_context": geo_ctx}
             threading.Thread(target=_run_and_log, args=(web_search, "search", search_args), daemon=True).start()
-        elif intent == "generate_social_post": threading.Thread(target=_run_and_log, args=(generate_social_post, "generate_social_post", args), daemon=True).start()
+        elif intent == "generate_social_post":
+            if not FEATURE_SOCIAL or not generate_social_post:
+                edge_speak("Boss, social media posting is disabled in this configuration.", ui)
+                continue
+            threading.Thread(target=_run_and_log, args=(generate_social_post, "generate_social_post", args), daemon=True).start()
         elif intent == "generate_analytics_report": threading.Thread(target=_run_and_log, args=(generate_analytics_report, "generate_analytics_report", args), daemon=True).start()
         elif intent == "email_message": threading.Thread(target=_run_and_log, args=(send_email_message, "email_message", args), daemon=True).start()
         elif intent == "send_message": threading.Thread(target=_run_and_log, args=(send_message, "send_message", args), daemon=True).start()
@@ -373,10 +447,11 @@ async def ai_loop(ui: RubeUI, input_queue: asyncio.Queue):
 def main():
     ui = RubeUI(size=(380, 450))
     ui.session_memory = temp_memory  # Link session state for developer dashboard
-    try:
-        from actions import face_recognizer
-        face_recognizer.identity_lock_queue = asyncio.Queue() 
-    except Exception: pass
+    if FEATURE_FACIAL:
+        try:
+            from actions import face_recognizer
+            face_recognizer.identity_lock_queue = asyncio.Queue()
+        except Exception: pass
 
     def runner():
         loop = asyncio.new_event_loop()

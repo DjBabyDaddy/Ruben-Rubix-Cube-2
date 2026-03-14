@@ -1,8 +1,16 @@
 import os
-import cv2
-import numpy as np
 import time
 from tts import edge_speak
+
+try:
+    import cv2
+    import numpy as np
+    OPENCV_AVAILABLE = True
+except ImportError:
+    OPENCV_AVAILABLE = False
+    cv2 = None
+    np = None
+    print("ℹ️ OpenCV not installed. Facial recognition disabled. Install opencv-contrib-python to enable.")
 
 FACES_DIR = "memory/known_faces"
 face_recognizer = None
@@ -11,6 +19,9 @@ label_map = {}
 
 def initialize_facial_matrix():
     global face_recognizer, face_cascade, label_map
+    if not OPENCV_AVAILABLE:
+        print("ℹ️ Facial recognition skipped — OpenCV not available.")
+        return
     print("🧠 RUBE Loading Optimized Facial Recognition Matrix...")
     
     if not os.path.exists(FACES_DIR):
@@ -50,8 +61,11 @@ def initialize_facial_matrix():
 
 def identity_scan_room(parameters, response, player, session_memory):
     global face_recognizer, face_cascade, label_map
+    if not OPENCV_AVAILABLE:
+        edge_speak("Boss, facial recognition requires OpenCV. It's not installed on this system.", player)
+        return
     time.sleep(1.2)
-    
+
     if face_recognizer is None or face_cascade is None:
         edge_speak("Boss, the facial recognition matrix is empty. Please add photos to my memory folder.", player)
         return
